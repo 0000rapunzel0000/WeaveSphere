@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WeaveSphere Architecture</title>
+<style>
+:root{--bg:#f7f6f2;--panel:#fff;--ink:#1d1f1c;--muted:#5f665e;--line:#dcdad2;--accent:#a8622a;--accent-soft:#f3e6d8;--good:#2f7a4a;--good-soft:#e2f1e6;--warn:#9a6a00;--warn-soft:#f8edd0;--bad:#a83a2c;--bad-soft:#f7e1dc;--code:#efede6;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141517;--panel:#1d1e21;--ink:#ecebe5;--muted:#a1a79f;--line:#33353a;--accent:#d49a62;--accent-soft:#3a2b1d;--good:#7cc79a;--good-soft:#1d3326;--warn:#e9c46a;--warn-soft:#3a3016;--bad:#ef897b;--bad-soft:#3d221e;--code:#26282c}}
+:root[data-theme="dark"]{--bg:#141517;--panel:#1d1e21;--ink:#ecebe5;--muted:#a1a79f;--line:#33353a;--accent:#d49a62;--accent-soft:#3a2b1d;--good:#7cc79a;--good-soft:#1d3326;--warn:#e9c46a;--warn-soft:#3a3016;--bad:#ef897b;--bad-soft:#3d221e;--code:#26282c}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+code,.mono{font-family:var(--mono);font-size:.86em}
+code{background:var(--code);padding:1px 5px;border-radius:4px}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow:auto;font:13px/1.5 var(--mono);margin:10px 0}
+.layout{display:grid;grid-template-columns:240px minmax(0,1fr);max-width:1240px;margin:0 auto}
+nav.toc{position:sticky;top:0;height:100vh;overflow:auto;padding:28px 18px;border-right:1px solid var(--line)}
+nav.toc .brand{font-weight:800;letter-spacing:.12em;font-size:12px;margin-bottom:4px}
+nav.toc .sub{color:var(--muted);font-size:12px;margin-bottom:18px}
+nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:5px 8px;border-radius:6px;font-size:13.5px}
+nav.toc a:hover{background:var(--accent-soft);color:var(--ink)}
+main{padding:36px 40px 80px;min-width:0}
+header.hero h1{font-size:38px;line-height:1.1;letter-spacing:-.02em;margin:6px 0 10px}
+.eyebrow{font:600 11px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.lede{color:var(--muted);max-width:760px;font-size:16px}
+section{margin-top:52px;scroll-margin-top:16px}
+h2{font-size:24px;letter-spacing:-.01em;margin:0 0 6px;padding-top:4px}
+h3{font-size:17px;margin:26px 0 8px}
+.intro{color:var(--muted);margin:0 0 16px;max-width:780px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:24px 0 8px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+.stat b{display:block;font-size:26px;letter-spacing:-.02em}
+.stat span{color:var(--muted);font-size:12.5px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:12px 0}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.card h4{margin:0 0 6px;font-size:15px}
+.card p,.card ul{margin:6px 0 0;color:var(--muted);font-size:14px}
+.card ul{padding-left:18px}
+table{width:100%;border-collapse:collapse;font-size:14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th,td{text-align:left;padding:9px 12px;border-top:1px solid var(--line);vertical-align:top}
+th{background:var(--code);font:600 11.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-top:0}
+.tablewrap{overflow-x:auto;margin:12px 0;border-radius:10px}
+.pill{display:inline-block;font:600 11px var(--mono);padding:2px 8px;border-radius:999px;white-space:nowrap}
+.ok{background:var(--good-soft);color:var(--good)}
+.mid{background:var(--warn-soft);color:var(--warn)}
+.no{background:var(--bad-soft);color:var(--bad)}
+.note{border-left:3px solid var(--accent);background:var(--accent-soft);padding:10px 14px;border-radius:0 8px 8px 0;margin:14px 0;font-size:14px}
+.warnbox{border-left:3px solid var(--warn);background:var(--warn-soft);padding:10px 14px;border-radius:0 8px 8px 0;margin:14px 0;font-size:14px}
+figure{margin:16px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;overflow-x:auto}
+figcaption{color:var(--muted);font-size:13px;margin-top:8px}
+svg{display:block;max-width:100%;height:auto;font-family:var(--sans)}
+svg .box{fill:var(--panel);stroke:var(--line);stroke-width:1.5}
+svg .box.hl{fill:var(--accent-soft);stroke:var(--accent)}
+svg .box.ext{fill:var(--code);stroke:var(--line);stroke-dasharray:5 4}
+svg .t{fill:var(--ink);font-size:14px;font-weight:600}
+svg .s{fill:var(--muted);font-size:12px}
+svg .m{fill:var(--muted);font-size:11px;font-family:var(--mono)}
+svg .arrow{stroke:var(--muted);stroke-width:1.6;fill:none;marker-end:url(#ah)}
+svg .arrow.acc{stroke:var(--accent)}
+svg #ah path,svg #ah2 path{fill:var(--muted)}
+details.qa{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:8px 0;padding:0}
+details.qa summary{cursor:pointer;padding:12px 16px;font-weight:600;list-style:none}
+details.qa summary::-webkit-details-marker{display:none}
+details.qa summary:before{content:"+";display:inline-block;width:18px;color:var(--accent);font-family:var(--mono)}
+details.qa[open] summary:before{content:"–"}
+details.qa .a{padding:0 16px 14px 34px;color:var(--ink);font-size:14.5px}
+details.qa .a p{margin:6px 0}
+.flow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.flow span{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:13px}
+.flow i{color:var(--muted);font-style:normal}
+.themebtn{position:fixed;right:16px;top:14px;z-index:5;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 10px;font:12px var(--mono);cursor:pointer}
+@media (max-width:900px){figure svg{min-width:760px}.layout{grid-template-columns:1fr}nav.toc{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:18px 16px}nav.toc a{display:inline-block}main{padding:24px 16px 60px}.grid2,.grid3{grid-template-columns:1fr}header.hero h1{font-size:30px}}
+@media print{nav.toc,.themebtn{display:none}.layout{grid-template-columns:1fr}details.qa{break-inside:avoid}details.qa .a{display:block}}
+</style>
+</head>
+<body>
+<button class="themebtn" id="themeBtn" type="button" aria-label="Toggle colour theme">◐ theme</button>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">WEAVESPHERE</div>
+  <div class="sub">Everest Textile Mills · architecture</div>
+  <a href="#overview">1. Overview</a>
+  <a href="#system">2. System architecture</a>
+  <a href="#request">3. Life of a request</a>
+  <a href="#data">4. Data model</a>
+  <a href="#modules">5. Modules &amp; endpoints</a>
+  <a href="#rules">6. Hard guarantees</a>
+  <a href="#ai">7. AI layer</a>
+  <a href="#frontend">8. Frontend</a>
+  <a href="#security">9. Security</a>
+  <a href="#testing">10. Testing &amp; evidence</a>
+  <a href="#tradeoffs">11. Design decisions</a>
+  <a href="#qa">12. Interview Q&amp;A</a>
+  <a href="#limits">13. Known limits</a>
+  <a href="#run">14. Run it</a>
+</nav>
+<main>
+
+<header class="hero" id="overview">
+  <div class="eyebrow">Technical round prep · as of 10 Oct 2026</div>
+  <h1>Everest Textile Mills: one system from yarn to profit</h1>
+  <p class="lede">WeaveSphere replaces notebooks and phone calls at a textile mill. Yarn arrives, gets issued to orders, becomes fabric on machines, is cut into QR-coded rolls, passes quality control, ships on a truck with an invoice, and lands in the month-end P&amp;L. Every roll is traceable back to its order, machine, shift, operator, yarn and QC history.</p>
+  <p class="lede"><b>Guiding principle from the spec:</b> code for rules, <b>Jev</b> for decisions, an <b>LLM</b> for words. Nothing involving stock, money or dispatch is ever decided by AI.</p>
+  <div class="stats">
+    <div class="stat"><b>55</b><span>API endpoints</span></div>
+    <div class="stat"><b>25 + 1</b><span>tables + computed stock view</span></div>
+    <div class="stat"><b>~1,020</b><span>lines of API code (one file)</span></div>
+    <div class="stat"><b>14</b><span>frontend screens, 6 roles</span></div>
+    <div class="stat"><b>2</b><span>dependencies: FastAPI, uvicorn</span></div>
+    <div class="stat"><b>All 8</b><span>demo steps covered by tests</span></div>
+  </div>
+</header>
+
+<section id="system">
+  <h2>2. System architecture</h2>
+  <p class="intro">Three parts: a plain-JavaScript frontend served by Vite, a single FastAPI backend over SQLite, and OpenRouter for all AI. The buyer's tracking page is the only thing that works without signing in.</p>
+  <figure>
+  <svg viewBox="0 0 980 420" role="img" aria-label="System architecture diagram">
+    <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>
+    <!-- clients -->
+    <rect class="box" x="20" y="40" width="200" height="88" rx="10"/>
+    <text class="t" x="36" y="68">Mill staff</text>
+    <text class="s" x="36" y="88">Owner · Office · Store</text>
+    <text class="s" x="36" y="106">Floor · QC (phones, desktops)</text>
+    <rect class="box" x="20" y="160" width="200" height="72" rx="10"/>
+    <text class="t" x="36" y="188">Buyer</text>
+    <text class="s" x="36" y="208">tracking link, no account</text>
+    <!-- frontend -->
+    <rect class="box hl" x="270" y="40" width="210" height="192" rx="10"/>
+    <text class="t" x="286" y="68">Frontend</text>
+    <text class="s" x="286" y="88">frontend/src/app.js</text>
+    <text class="m" x="286" y="112">plain JS · Vite</text>
+    <text class="m" x="286" y="130">14 screens by role</text>
+    <text class="m" x="286" y="148">sessionStorage token</text>
+    <text class="m" x="286" y="166">#track=… buyer view</text>
+    <text class="m" x="286" y="184">#roll=… QR deep link</text>
+    <text class="m" x="286" y="214">calls /api/* (proxy)</text>
+    <!-- backend -->
+    <rect class="box hl" x="530" y="40" width="220" height="250" rx="10"/>
+    <text class="t" x="546" y="68">Backend · FastAPI</text>
+    <text class="s" x="546" y="88">backend/app.py</text>
+    <text class="m" x="546" y="112">bearer auth + role()</text>
+    <text class="m" x="546" y="130">pydantic validation</text>
+    <text class="m" x="546" y="148">business rules in code</text>
+    <text class="m" x="546" y="166">tx(): BEGIN IMMEDIATE</text>
+    <text class="m" x="546" y="184">confidence gate + review log</text>
+    <text class="m" x="546" y="202">errors → {"detail": text}</text>
+    <rect class="box" x="546" y="222" width="188" height="52" rx="8"/>
+    <text class="t" x="560" y="244">ai.py</text>
+    <text class="m" x="560" y="262">only file that calls AI</text>
+    <!-- db -->
+    <rect class="box" x="530" y="330" width="220" height="72" rx="10"/>
+    <text class="t" x="546" y="358">SQLite (WAL)</text>
+    <text class="m" x="546" y="378">STRICT · CHECK · UNIQUE · FK</text>
+    <text class="m" x="546" y="394">yarn_stock = computed view</text>
+    <!-- openrouter -->
+    <rect class="box ext" x="800" y="150" width="160" height="150" rx="10"/>
+    <text class="t" x="816" y="178">OpenRouter</text>
+    <text class="m" x="816" y="202">Jev decisions API</text>
+    <text class="m" x="816" y="218">typesafe/jev-1.13</text>
+    <text class="m" x="816" y="246">Chat model</text>
+    <text class="m" x="816" y="262">gemini-2.5-flash</text>
+    <text class="m" x="816" y="284">one API key</text>
+    <!-- arrows -->
+    <path class="arrow" d="M220,84 H268"/>
+    <path class="arrow" d="M220,196 H268"/>
+    <path class="arrow acc" d="M480,120 H528"/>
+    <text class="m" x="488" y="112">JSON</text>
+    <path class="arrow" d="M640,290 V328"/>
+    <path class="arrow" d="M734,248 H798"/>
+    <text class="m" x="754" y="240">5s/60s</text>
+  </svg>
+  <figcaption>In development, Vite serves the frontend on :5173 and proxies <code>/api/*</code> to the backend on :8000. In production, serve the API under <code>/api</code> on the same host, or set <code>window.EVEREST_API</code>.</figcaption>
+  </figure>
+  <div class="tablewrap"><table>
+    <tr><th>Layer</th><th>Technology</th><th>Files</th><th>Why this choice</th></tr>
+    <tr><td>Frontend</td><td>Plain JavaScript, Vite dev server and build</td><td><code>frontend/src/app.js</code>, <code>index.html</code>, <code>app.css</code></td><td>The team's existing prototype; rewired to the API rather than rewritten in a framework.</td></tr>
+    <tr><td>API</td><td>Python 3.12, FastAPI, pydantic</td><td><code>backend/app.py</code></td><td>Typed request validation and free OpenAPI docs at <code>/docs</code>.</td></tr>
+    <tr><td>Database</td><td>SQLite in WAL mode, STRICT tables, raw SQL</td><td><code>backend/db/schema.sql</code></td><td>One file, zero ops, real transactions and constraints. Right size for one mill.</td></tr>
+    <tr><td>AI</td><td>OpenRouter: Jev for decisions, a chat model for text and vision</td><td><code>backend/ai.py</code></td><td>One key, one bill, swappable models by setting.</td></tr>
+    <tr><td>Tests</td><td>pytest + FastAPI TestClient; a live AI smoke script</td><td><code>backend/tests/test_app.py</code>, <code>smoke_ai.py</code></td><td>One end-to-end test walks the whole demo; a race test proves the stock lock.</td></tr>
+  </table></div>
+</section>
+
+<section id="request">
+  <h2>3. Life of a request</h2>
+  <p class="intro">Example: the store keeper issues 200 kg of yarn to an order.</p>
+  <div class="flow"><span>POST /api/issues</span><i>→</i><span>Vite proxy</span><i>→</i><span><code>user()</code> looks up the bearer token in <code>sessions</code></span><i>→</i><span><code>role("admin","store")</code>; owner always passes</span><i>→</i><span>pydantic checks <code>qty_kg &gt; 0</code></span><i>→</i><span><code>get_db()</code>: fresh connection</span><i>→</i><span><code>tx()</code>: BEGIN IMMEDIATE</span><i>→</i><span>read stock + moving-avg rate</span><i>→</i><span>enough? insert issue with rate : 409</span><i>→</i><span>COMMIT</span><i>→</i><span>return issue + low-stock list</span></div>
+  <div class="grid2">
+    <div class="card"><h4>Connections and threads</h4><p>Every endpoint is a plain <code>def</code>, so FastAPI runs it in a worker thread, never on the event loop. Each request gets its own SQLite connection (<code>busy_timeout</code> 5 s) and closes it at the end.</p></div>
+    <div class="card"><h4>Transactions</h4><p>Connections run in autocommit. Anything that reads and then writes based on what it read (stock, dispatch scans, QC, review resolution) is wrapped in <code>tx()</code>, which takes SQLite's write lock up front with <code>BEGIN IMMEDIATE</code>.</p></div>
+    <div class="card"><h4>Errors</h4><ul><li>Business rule blocked → <code>409</code> with a readable message</li><li>Bad input → <code>422</code>, always one line of text</li><li>Duplicate / missing reference → <code>409</code> "Already exists…" / "refers to a record that does not exist"</li><li>AI down → <code>503</code> on text features only</li></ul></div>
+    <div class="card"><h4>AI calls never hold locks</h4><p>The write is committed first; the Jev call happens afterwards. A slow AI call delays only that one response, never another user's write.</p></div>
+  </div>
+</section>
+
+<section id="data">
+  <h2>4. Data model</h2>
+  <p class="intro">25 STRICT tables, one computed view. The core idea of the spec: every roll links to order → machine → shift → operator → QC → dispatch.</p>
+  <figure>
+  <svg viewBox="0 0 980 360" role="img" aria-label="Core data flow between tables">
+    <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>
+    <g>
+      <rect class="box" x="20" y="30" width="130" height="50" rx="8"/><text class="t" x="34" y="60">grn</text>
+      <rect class="box hl" x="200" y="30" width="150" height="50" rx="8"/><text class="t" x="214" y="52">yarn_stock</text><text class="m" x="214" y="70">VIEW: GRN − issues</text>
+      <rect class="box" x="400" y="30" width="160" height="50" rx="8"/><text class="t" x="414" y="52">material_issues</text><text class="m" x="414" y="70">rate saved at issue</text>
+      <rect class="box hl" x="610" y="30" width="130" height="50" rx="8"/><text class="t" x="624" y="60">orders</text>
+      <rect class="box" x="790" y="30" width="170" height="50" rx="8"/><text class="t" x="804" y="52">buyers · fabric_types</text><text class="m" x="804" y="70">bom (kg per metre)</text>
+
+      <rect class="box" x="400" y="130" width="160" height="50" rx="8"/><text class="t" x="414" y="152">job_cards</text><text class="m" x="414" y="170">order × machine</text>
+      <rect class="box" x="610" y="130" width="160" height="50" rx="8"/><text class="t" x="624" y="152">production_entries</text><text class="m" x="624" y="170">output, hours</text>
+      <rect class="box" x="200" y="130" width="150" height="50" rx="8"/><text class="t" x="214" y="152">machines</text><text class="m" x="214" y="170">+ status_log</text>
+      <rect class="box" x="20" y="130" width="130" height="50" rx="8"/><text class="t" x="34" y="152">workers · shifts</text><text class="m" x="34" y="170">+ attendance</text>
+
+      <rect class="box hl" x="400" y="230" width="160" height="50" rx="8"/><text class="t" x="414" y="252">rolls</text><text class="m" x="414" y="270">qr · metres · status</text>
+      <rect class="box" x="610" y="230" width="130" height="50" rx="8"/><text class="t" x="624" y="260">qc_records</text>
+      <rect class="box" x="200" y="230" width="150" height="50" rx="8"/><text class="t" x="214" y="252">dispatch_items</text><text class="m" x="214" y="270">roll_id UNIQUE</text>
+      <rect class="box" x="20" y="230" width="130" height="50" rx="8"/><text class="t" x="34" y="252">dispatches</text><text class="m" x="34" y="270">→ invoices</text>
+      <rect class="box" x="20" y="300" width="130" height="44" rx="8"/><text class="t" x="34" y="327">payments</text>
+      <rect class="box ext" x="790" y="230" width="170" height="50" rx="8"/><text class="t" x="804" y="252">ai_reviews</text><text class="m" x="804" y="270">every AI decision</text>
+      <rect class="box ext" x="790" y="130" width="170" height="50" rx="8"/><text class="t" x="804" y="152">buyer_messages</text><text class="m" x="804" y="170">intent · dept · urgency</text>
+    </g>
+    <g style="--x:0">
+      <path class="arrow" d="M150,55 H198" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M398,55 H352" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M608,55 H562" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M788,55 H742" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M675,80 V128" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M640,80 L520,128" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M398,155 H352" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M150,155 H198" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M480,180 V228" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M562,255 H608" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M398,255 H352" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M198,255 H152" marker-end="url(#ah2)"/>
+      <path class="arrow" d="M85,280 V298" marker-end="url(#ah2)"/>
+    </g>
+  </svg>
+  <figcaption>Arrows show how records link and how data moves through the mill. Users, sessions and suppliers are left out for space.</figcaption>
+  </figure>
+  <h3>Derived, never stored</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Value</th><th>How it is computed</th><th>Why</th></tr>
+    <tr><td>Yarn stock</td><td><code>SUM(grn.qty) − SUM(issues.qty)</code> per yarn type, in the <code>yarn_stock</code> view</td><td>Can never drift from the receipts and issues that caused it.</td></tr>
+    <tr><td>Yarn cost rate</td><td>Moving average of stock on hand: (value received − value issued) ÷ kg on hand. Saved on each issue.</td><td>Past months never change when a new delivery arrives.</td></tr>
+    <tr><td>Order stage</td><td>Dispatched if a truck closed → Ready if passed metres ≥ target → In QC if rolls are waiting → furthest machine stage with a job card → Pending</td><td>No status field anyone can forget to update.</td></tr>
+    <tr><td>Progress, ETA</td><td>max(roll metres, furthest-stage output) ÷ target; ETA from the last 7 days' output per active day</td><td>Fabric on the loom counts before any roll exists.</td></tr>
+    <tr><td>Feasibility</td><td>Need − issued vs stock minus what earlier open orders still need</td><td>Two orders can't both claim the same yarn.</td></tr>
+  </table></div>
+  <h3>Roll lifecycle</h3>
+  <div class="flow"><span>pending_qc</span><i>→ pass →</i><span>passed</span><i>→ truck closed →</i><span>dispatched</span></div>
+  <div class="flow"><span>pending_qc</span><i>→ rework →</i><span>rework</span><i>→ back to QC queue →</i><span>pass / rework / reject</span></div>
+  <div class="flow"><span>pending_qc</span><i>→ reject →</i><span>rejected</span><i>(blocked from dispatch forever)</i></div>
+</section>
+
+<section id="modules">
+  <h2>5. Modules &amp; endpoints</h2>
+  <p class="intro">Full reference with request and response shapes: <code>docs/backend.md</code> and the live <code>/docs</code> page.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Module</th><th>Endpoints</th><th>Who writes</th><th>Key behaviour</th></tr>
+    <tr><td>Auth</td><td><code>/auth/setup</code> <code>/auth/login</code> <code>/auth/logout</code> <code>/me</code> <code>/users</code></td><td>owner, admin</td><td>Setup works once on an empty DB. scrypt hashes, random session tokens.</td></tr>
+    <tr><td>Master data</td><td><code>/master/{table}</code> (GET, POST, PUT)</td><td>admin</td><td>One generic endpoint for 8 tables; field names checked against the schema; machine status excluded.</td></tr>
+    <tr><td>Orders</td><td><code>/orders</code> <code>/orders/{id}</code> <code>/feasibility</code> <code>/risk</code></td><td>admin</td><td>Yarn need from BOM, derived stage, Jev deadline-risk probability.</td></tr>
+    <tr><td>Buyer tracking</td><td><code>/track/{token}</code></td><td>public</td><td>128-bit token per order; shows progress only.</td></tr>
+    <tr><td>Raw material</td><td><code>/grn</code> <code>/grn/challan</code> <code>/stock</code> <code>/alerts/low-stock</code> <code>/issues</code></td><td>store</td><td>Locked stock check; challan photo → suggested GRN, person confirms.</td></tr>
+    <tr><td>Floor</td><td><code>/jobs</code> <code>/machines/{id}/status</code> <code>/production</code> <code>/rolls</code> <code>/floor</code></td><td>supervisor</td><td>One open job per machine; breakdown note → Jev triage; roll gets a QR code.</td></tr>
+    <tr><td>Quality</td><td><code>/qc/queue</code> <code>/qc/{qr}</code> <code>/rolls/{qr}</code></td><td>qc</td><td>Rework loop; notes → Jev classifies defect; full traceability view.</td></tr>
+    <tr><td>Dispatch</td><td><code>/finished-goods</code> <code>/dispatches</code> <code>/scan</code> <code>/close</code></td><td>store</td><td>Hard guards on scan; invoice + packing list on close.</td></tr>
+    <tr><td>Workforce</td><td><code>/attendance</code> <code>/wages</code></td><td>supervisor / admin</td><td>Daily rate × days present, or piece rate × output.</td></tr>
+    <tr><td>Accounts</td><td><code>/payments</code> <code>/reports/*</code></td><td>admin / owner</td><td>Cost per order, machine output, receivables, payables, monthly P&amp;L.</td></tr>
+    <tr><td>Buyer messages</td><td><code>/messages</code> <code>/draft</code> <code>/reply</code></td><td>admin</td><td>Jev routes department/intent/urgency; LLM drafts EN/TA/HI reply from live data.</td></tr>
+    <tr><td>AI review</td><td><code>/reviews</code> <code>/reviews/{id}</code> <code>/reviews/accuracy</code></td><td>admin, supervisor, qc</td><td>Queue for unsure decisions; correct any decision; accuracy per confidence band.</td></tr>
+  </table></div>
+</section>
+
+<section id="rules">
+  <h2>6. Hard guarantees (code, never AI)</h2>
+  <div class="grid2">
+    <div class="card"><h4>Stock can't go negative</h4><p>The issue endpoint takes the database write lock before reading stock. Two simultaneous issues of the last 100 kg: one succeeds, the other gets <code>409 only 0 kg in stock</code>. Proven by a two-thread test.</p></div>
+    <div class="card"><h4>A roll ships once</h4><p><code>dispatch_items.roll_id</code> is UNIQUE in the database. The scan also checks: truck still open, roll belongs to this order, roll is QC-passed. Each block returns a <code>BLOCKED: …</code> message.</p></div>
+    <div class="card"><h4>Invoices are arithmetic</h4><p>Metres scanned × order price, GST from the fabric type, rounded to paise and stored at close. Created in the same transaction that marks rolls dispatched.</p></div>
+    <div class="card"><h4>QC can't be decided twice</h4><p>A roll must be <code>pending_qc</code> or <code>rework</code>; otherwise <code>409</code>. Rework and reject require a defect type or notes.</p></div>
+    <div class="card"><h4>Database-level rules</h4><p>STRICT typing, CHECK constraints on every enum and quantity, foreign keys on, UNIQUE where duplicates would be wrong (machine names, yarn types, BOM lines, tracking tokens, roll codes).</p></div>
+    <div class="card"><h4>Payments match invoices</h4><p>A buyer payment linked to an invoice must come from that invoice's buyer.</p></div>
+  </div>
+</section>
+
+<section id="ai">
+  <h2>7. AI layer</h2>
+  <p class="intro">Everything goes through OpenRouter with one key. <code>ai.py</code> is the only file that knows about models.</p>
+  <figure>
+  <svg viewBox="0 0 980 250" role="img" aria-label="AI decision flow with confidence gate">
+    <rect class="box" x="20" y="90" width="170" height="70" rx="10"/><text class="t" x="36" y="118">Event</text><text class="s" x="36" y="138">3 kinds, see table</text>
+    <rect class="box" x="230" y="90" width="170" height="70" rx="10"/><text class="t" x="246" y="118">Code builds state</text><text class="s" x="246" y="138">live order data, notes</text>
+    <rect class="box hl" x="440" y="90" width="170" height="70" rx="10"/><text class="t" x="456" y="118">Jev: one call</text><text class="s" x="456" y="138">2–3 typed questions</text>
+    <rect class="box" x="650" y="90" width="150" height="70" rx="10"/><text class="t" x="666" y="118">Gate</text><text class="s" x="666" y="138">main field ≥ threshold</text>
+    <rect class="box" x="840" y="20" width="125" height="80" rx="10"/><text class="t" x="854" y="48">Auto-apply</text><text class="s" x="854" y="68">write fields</text><text class="s" x="854" y="86">log (correctable)</text>
+    <rect class="box" x="840" y="150" width="125" height="80" rx="10"/><text class="t" x="854" y="178">Review queue</text><text class="s" x="854" y="198">fields stay empty</text><text class="s" x="854" y="216">person decides</text>
+    <path class="arrow" d="M190,125 H228" marker-end="url(#ah)"/>
+    <path class="arrow" d="M400,125 H438" marker-end="url(#ah)"/>
+    <path class="arrow" d="M610,125 H648" marker-end="url(#ah)"/>
+    <path class="arrow acc" d="M800,110 L838,70" marker-end="url(#ah)"/>
+    <path class="arrow" d="M800,140 L838,185" marker-end="url(#ah)"/>
+    <text class="m" x="770" y="70">yes</text><text class="m" x="650" y="182">no · "other" · AI down</text>
+  </svg>
+  </figure>
+  <div class="tablewrap"><table>
+    <tr><th>Decision</th><th>Jev answers</th><th>Gate checks</th><th>Set by rule instead</th></tr>
+    <tr><td>Buyer message routing</td><td>dept, intent, urgency</td><td>dept; intent "other" always goes to a person</td><td>—</td></tr>
+    <tr><td>Breakdown triage</td><td>category, severity</td><td>category</td><td>who to send: mechanical→fitter, electrical→electrician, yarn→store, operator→supervisor</td></tr>
+    <tr><td>QC defect</td><td>defect type, stage at fault, severity</td><td>defect type (or stage, if the inspector chose the type)</td><td>the inspector's own defect type always wins</td></tr>
+    <tr><td>Order risk</td><td>yes/no probability of missing the deadline</td><td>no gate (shown only)</td><td>inputs computed by code: progress, days left, yarn short, idle machines</td></tr>
+  </table></div>
+  <div class="grid2">
+    <div class="card"><h4>Words (chat model)</h4><ul><li>Reply draft in English, Tamil or Hindi from live order data only; a person edits and marks it sent.</li><li>Challan photo → suggested GRN fields; the store keeper confirms before saving.</li></ul></div>
+    <div class="card"><h4>Never AI</h4><ul><li>Stock levels, issue limits</li><li>Dispatch guards, invoices, GST</li><li>Wages, cost per order, P&amp;L</li><li>Machine status itself (set by a person)</li></ul></div>
+    <div class="card"><h4>Failure mode</h4><p>Any error, timeout (5 s) or out-of-range answer gives confidence 0, so the decision goes to the review queue. Nothing blocks the floor. Text features return <code>503</code> and the person writes it by hand.</p></div>
+    <div class="card"><h4>Learning the threshold</h4><p>Every decision is logged in <code>ai_reviews</code>, including automatic ones, and any can be corrected. <code>/reviews/accuracy</code> shows how often Jev matched the person per confidence band. Default threshold 0.8; 0.7 used for the demo.</p></div>
+  </div>
+  <h3>Live results on OpenRouter (two runs)</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Case</th><th>Main-decision confidence</th><th>At 0.8</th><th>At 0.7</th></tr>
+    <tr><td>"When will order 12 be ready?" → Production</td><td>0.85 / 0.80</td><td><span class="pill mid">borderline</span></td><td><span class="pill ok">auto</span></td></tr>
+    <tr><td>"hmm ok" → intent other</td><td>n/a</td><td><span class="pill ok">review</span></td><td><span class="pill ok">review</span></td></tr>
+    <tr><td>Loom 4 "yarn keeps snapping" → yarn quality</td><td>0.77 / 0.73</td><td><span class="pill no">review</span></td><td><span class="pill ok">auto</span></td></tr>
+    <tr><td>Order risk (30% done, 4 days left, 120 kg short)</td><td>P(late) 0.87 / 0.88</td><td colspan="2">shown as a flag</td></tr>
+    <tr><td>Tamil reply draft</td><td colspan="3">correct, used only live order data</td></tr>
+  </table></div>
+  <div class="warnbox"><b>Latency:</b> Jev took 0.6–2.9 s per call, the chat model 1.2–1.5 s. The spec's "under 500 ms" does not hold today. <b>Not yet re-run:</b> option descriptions were added to every Jev question after these runs; run <code>python3 smoke_ai.py</code> to measure their effect.</div>
+</section>
+
+<section id="frontend">
+  <h2>8. Frontend</h2>
+  <p class="intro">The team's prototype, rewired so every screen reads and writes through the API. No data is stored in the browser except the session token (per tab) and the language choice.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Role</th><th>Screens</th></tr>
+    <tr><td>Owner</td><td>All 14: Dashboard, Orders, Production, Inventory, Quality, Traceability, Dispatch, Tracking, Inbox, Reviews, Workforce, Accounts, Masters, Reports</td></tr>
+    <tr><td>Office / Admin</td><td>All except Reports</td></tr>
+    <tr><td>Store keeper</td><td>Dashboard, Inventory, Orders, Dispatch, Traceability, Tracking</td></tr>
+    <tr><td>Floor supervisor</td><td>Dashboard, Production, Orders, Traceability, Tracking, Reviews, Workforce</td></tr>
+    <tr><td>QC inspector</td><td>Dashboard, Quality, Traceability, Tracking, Reviews</td></tr>
+    <tr><td>Buyer</td><td>Their order only, via <code>#track=…</code> link</td></tr>
+  </table></div>
+  <div class="grid3">
+    <div class="card"><h4>API client</h4><p>One <code>api()</code> function: adds the token, turns every error into its readable <code>detail</code>, signs out on <code>401</code>.</p></div>
+    <div class="card"><h4>QR codes</h4><p>The backend issues <code>ETM-XXXXXXXXXX</code>; the page draws the QR. Scanning opens <code>#roll=…</code>, which jumps to traceability after sign-in.</p></div>
+    <div class="card"><h4>Menus vs permissions</h4><p>Menus hide what a role can't use, but the server enforces every permission independently.</p></div>
+  </div>
+</section>
+
+<section id="security">
+  <h2>9. Security</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Area</th><th>What is in place</th><th>Gap</th></tr>
+    <tr><td>Passwords</td><td>scrypt (n=2¹⁴) with a per-user random salt, constant-time compare</td><td>No reset flow</td></tr>
+    <tr><td>Sessions</td><td>32-byte random bearer tokens in the DB; logout deletes them</td><td><span class="pill mid">no expiry</span></td></tr>
+    <tr><td>Authorisation</td><td><code>role()</code> dependency on every write; owner passes everything</td><td>—</td></tr>
+    <tr><td>SQL injection</td><td>All values parameterised. Table/column names only from code, or validated against <code>PRAGMA table_info</code></td><td>—</td></tr>
+    <tr><td>Buyer links</td><td>128-bit unguessable token per order; shows progress only, no prices or other orders</td><td>Not revocable yet</td></tr>
+    <tr><td>Input</td><td>pydantic types and ranges at the edge, CHECK/FK/STRICT in the DB</td><td>—</td></tr>
+    <tr><td>CORS</td><td>Allow-list from <code>CORS_ORIGINS</code>; default localhost:5173</td><td>—</td></tr>
+    <tr><td>Secrets</td><td>API key only in the environment; <code>.env</code> git-ignored</td><td>—</td></tr>
+  </table></div>
+</section>
+
+<section id="testing">
+  <h2>10. Testing &amp; evidence</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Check</th><th>What it proves</th><th>Status</th></tr>
+    <tr><td><code>test_demo_flow</code></td><td>All 8 demo steps end to end over HTTP: roles, feasibility "short by 120 kg", reservations, stock lock, triage, routing, QC, traceability, dispatch guards, invoice ₹1,05,000 incl. GST, payments, wages, costing, P&amp;L, review correction, accuracy report, past costs unchanged after a pricier delivery</td><td><span class="pill ok">pass</span></td></tr>
+    <tr><td><code>test_last_yarn_cannot_be_issued_twice</code></td><td>Two threads issue the last 100 kg at once, 5 rounds: exactly one wins, stock ends at 0. Verified to fail when the lock is removed</td><td><span class="pill ok">pass</span></td></tr>
+    <tr><td><code>smoke_ai.py</code></td><td>Real Jev and chat calls with the app's exact questions</td><td><span class="pill mid">re-run pending</span></td></tr>
+    <tr><td>Browser click-through</td><td>All 14 screens load; full demo flow driven through real forms</td><td><span class="pill ok">done</span></td></tr>
+    <tr><td>Scale benchmark</td><td>500k GRNs + 2M issues: all-stock read 4,152 ms → 79 ms with covering indexes; one-yarn check 52 ms → 1 ms</td><td><span class="pill ok">measured</span></td></tr>
+  </table></div>
+</section>
+
+<section id="tradeoffs">
+  <h2>11. Design decisions</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Decision</th><th>Chosen</th><th>Rejected</th><th>Reason</th><th>Revisit when</th></tr>
+    <tr><td>Database</td><td>SQLite, WAL</td><td>Postgres</td><td>One mill, a handful of writers, zero ops, real transactions</td><td>Multiple sites or sustained concurrent writes</td></tr>
+    <tr><td>Data access</td><td>Raw parameterised SQL</td><td>SQLAlchemy ORM</td><td>Readable queries, no model layer to keep in sync; constraints live in the DB</td><td>Team grows or moves to Postgres (use SQLAlchemy Core)</td></tr>
+    <tr><td>Stock</td><td>Computed view + covering indexes</td><td>Stored balance</td><td>Cannot drift; measured fast enough at 2.5M rows</td><td>Well beyond that: snapshot balances per month</td></tr>
+    <tr><td>Costing</td><td>Moving average saved per issue</td><td>FIFO lots</td><td>Allowed under Ind AS 2; closed months fixed; lot tracking out of scope</td><td>Accounting requires FIFO: add issue→GRN allocation table</td></tr>
+    <tr><td>AI calls</td><td>Synchronous, in a worker thread</td><td>Background queue</td><td>Result shows on the same screen; no lock held during the call</td><td>Floor staff find the 1–3 s wait disruptive</td></tr>
+    <tr><td>AI gate</td><td>Main decision only; rest are hints</td><td>All fields must pass</td><td>A weak urgency score was blocking confident routing</td><td>Accuracy data shows a hint field matters</td></tr>
+    <tr><td>Backend shape</td><td>One file, ~1,020 lines</td><td>Routes/services modules</td><td>Every module already exists; one place to read</td><td>Several people editing at once cause conflicts</td></tr>
+  </table></div>
+</section>
+
+<section id="qa">
+  <h2>12. Interview Q&amp;A</h2>
+  <p class="intro">Click a question to see the answer. Each answer points to evidence you can show.</p>
+
+  <details class="qa"><summary>Why no ORM? How do you prevent SQL injection?</summary><div class="a">
+    <p>Every value is a bound parameter. Table and column names are only built into SQL in a few places, and each comes from code or is checked against the real schema via <code>PRAGMA table_info</code> (master data) or a fixed field list (AI decisions).</p>
+    <p>Rules live in the database itself (STRICT types, CHECK, UNIQUE, foreign keys), so they hold no matter what code writes. For a growing team I'd add SQLAlchemy Core for query building, not a full ORM.</p></div></details>
+
+  <details class="qa"><summary>Stock is recalculated on every read. What happens at 2 million rows?</summary><div class="a">
+    <p>Measured: 500k GRNs and 2M issues. Without indexes, the full stock page took 4.2 s. With two covering indexes on <code>(yarn_type_id, qty_kg, rate)</code> it takes 79 ms, and the per-issue check takes 1 ms.</p>
+    <p>Beyond that I'd snapshot balances per closed month and sum only from the last snapshot, which keeps the no-drift property.</p></div></details>
+
+  <details class="qa"><summary>Two people issue the last 100 kg at the same moment. What happens?</summary><div class="a">
+    <p><code>BEGIN IMMEDIATE</code> takes SQLite's write lock before the stock read. The second request waits (up to 5 s), then reads 0 kg and gets a 409. The lock is file-level, so it holds across server processes too.</p>
+    <p>Evidence: a two-thread test with a slowed stock read; exactly one wins every round, and it fails when the lock is removed. Also: supervisors can't issue yarn at all; only store, admin, owner.</p></div></details>
+
+  <details class="qa"><summary>How did you pick the confidence threshold? What if the AI is confidently wrong?</summary><div class="a">
+    <p>Honestly: from two live runs, not calibration. That's why every decision is now logged and correctable, and <code>/reviews/accuracy</code> reports agreement per confidence band. The threshold should be set from that data.</p>
+    <p>Blast radius is bounded by design: AI only sets labels and routing. Machine status, stock, money and dispatch are set by people or code. Who to send to a breakdown is a rule from the category. A wrong label is corrected in one call, which re-applies the fields (including the assignee).</p></div></details>
+
+  <details class="qa"><summary>Jev takes 0.6–2.9 s. Doesn't that block FastAPI?</summary><div class="a">
+    <p>No. Endpoints are plain <code>def</code>, so FastAPI runs them in its thread pool; the event loop stays free. The database write is committed before the AI call, so no lock is held while waiting. Only the person who submitted waits; the call times out at 5 s and falls back to the review queue.</p>
+    <p>If floor staff find the wait disruptive, move the AI call to a background task and show the result when it arrives.</p></div></details>
+
+  <details class="qa"><summary>Average costing distorts P&amp;L when prices swing. How hard is FIFO?</summary><div class="a">
+    <p>The original version had a worse problem than the question: it averaged over every GRN ever, so a new delivery rewrote past months. Fixed: each issue saves the moving-average rate of stock on hand at that moment, and reports use the saved rate. Moving average is an accepted method under Ind AS 2.</p>
+    <p>For FIFO: each GRN already works as a batch with its own rate. Add one table linking each issue to the GRNs it consumed, allocate inside the same issue lock, and change two cost queries. About 40 lines. Out of scope in the spec.</p></div></details>
+
+  <details class="qa"><summary>Five orders need the same yarn. Does feasibility tell all five "can start"?</summary><div class="a">
+    <p>Not any more. Each order subtracts what earlier open orders still need (requirement minus already issued) before comparing with stock. Every yarn line shows <code>reserved_kg</code> and <code>free_kg</code>. Priority is first come, first served by order number.</p>
+    <p>Next steps if needed: a priority column, then a hard-allocation table checked by the issue endpoint.</p></div></details>
+
+  <details class="qa"><summary>Why SQLite for a production system?</summary><div class="a">
+    <p>One mill, a few dozen users, writes measured in hundreds per day. SQLite in WAL mode gives concurrent readers, a single serialised writer, real transactions and constraints, with no server to run. Backups are one file (taken safely with SQLite's <code>.backup</code> command). Moving to Postgres means a new connection layer plus porting a handful of SQLite-specific bits: STRICT tables, <code>date('now')</code>/<code>strftime</code>, two-argument <code>MAX()</code> and <code>INSERT OR IGNORE</code>. The queries themselves are standard SQL.</p></div></details>
+
+  <details class="qa"><summary>What happens when OpenRouter is down?</summary><div class="a">
+    <p>Nothing stops. Every Jev decision gets confidence 0 and lands in the review queue with empty fields; the risk flag shows "unknown"; reply drafting and challan reading return 503 and people type it themselves. All rules, stock, dispatch and money keep working because none of them touch AI.</p></div></details>
+
+  <details class="qa"><summary>How is the buyer tracking link secured?</summary><div class="a">
+    <p>Each order gets a 128-bit random token (<code>secrets.token_urlsafe(16)</code>). The public endpoint returns only progress, stage, ETA and dispatch summary for that one order: no prices, no other orders. Gap: tokens can't be revoked yet; adding a "regenerate link" endpoint is a one-liner.</p></div></details>
+
+  <details class="qa"><summary>How do you know the whole thing works?</summary><div class="a">
+    <p>One end-to-end test drives the full demo over HTTP, from GRN to P&amp;L, with exact expected figures. A dedicated race test proves the stock lock. A live smoke script hits the real AI with the app's exact questions. And the frontend was clicked through screen by screen against a seeded database.</p></div></details>
+
+  <details class="qa"><summary>What would you do with another month?</summary><div class="a">
+    <p>Session expiry and password reset; partial dispatch; WhatsApp integration for real message intake and sending; a camera QR scanner on phones; calibrate the AI threshold from the accuracy report; per-month stock snapshots; and a correction screen for auto-applied AI decisions in the frontend.</p></div></details>
+</section>
+
+<section id="limits">
+  <h2>13. Known limits</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Limit</th><th>Impact</th><th>Fix</th></tr>
+    <tr><td>Partial dispatch out of scope</td><td>An order shows "Dispatched" after its first truck closes, even if only part shipped</td><td>Dispatched only when shipped metres ≥ target</td></tr>
+    <tr><td>Sessions never expire</td><td>A stolen token works until logout</td><td>Expiry column + check in <code>user()</code></td></tr>
+    <tr><td>No WhatsApp/email integration</td><td>Messages are pasted in; replies are copied out and marked sent</td><td>WhatsApp Business webhook → <code>POST /messages</code></td></tr>
+    <tr><td>Money stored as rounded decimals</td><td>Fine at mill scale; not audit-grade</td><td>Integer paise</td></tr>
+    <tr><td>One query per order in <code>/orders</code> and <code>/floor</code></td><td>Fine for dozens of orders</td><td>Batch the tracking queries</td></tr>
+    <tr><td>Frontend Reviews page shows only the open queue</td><td>Correcting an auto-applied decision needs the API</td><td>Add a "recent decisions" tab</td></tr>
+    <tr><td>Challan photo reading untested live</td><td>May need prompt tuning</td><td><code>python3 smoke_ai.py challan.jpg</code></td></tr>
+    <tr><td>No camera QR scanner</td><td>Rolls are scanned with a USB/Bluetooth scanner or typed</td><td>Browser camera + a QR decoding library</td></tr>
+  </table></div>
+</section>
+
+<section id="run">
+  <h2>14. Run it</h2>
+<pre>cd backend
+pip install -r requirements.txt
+python3 seed.py                       # demo data; accounts owner, admin, store, floor, qc
+uvicorn app:app --reload              # http://localhost:8000/docs
+
+cd frontend
+npm install
+npm run dev                           # http://localhost:5173
+
+cd backend && python3 -m pytest -q tests
+OPENROUTER_API_KEY=sk-or-v1-... python3 smoke_ai.py</pre>
+  <div class="tablewrap"><table>
+    <tr><th>Setting</th><th>Default</th><th>Purpose</th></tr>
+    <tr><td><code>OPENROUTER_API_KEY</code></td><td>none</td><td>Turns AI on</td></tr>
+    <tr><td><code>AI_THRESHOLD</code></td><td>0.8</td><td>Confidence needed to auto-apply (0.7 for the demo)</td></tr>
+    <tr><td><code>JEV_MODEL</code> / <code>CHAT_MODEL</code></td><td>typesafe/jev-1.13 / google/gemini-2.5-flash</td><td>Swap models without code changes</td></tr>
+    <tr><td><code>DB_PATH</code></td><td>backend/mill.db</td><td>Database file</td></tr>
+    <tr><td><code>CORS_ORIGINS</code></td><td>http://localhost:5173</td><td>Allowed frontend addresses</td></tr>
+    <tr><td><code>DEMO_PASSWORD</code></td><td>everest-demo</td><td>Password for seeded accounts</td></tr>
+  </table></div>
+</section>
+
+</main>
+</div>
+<script>
+(function(){var b=document.getElementById('themeBtn'),r=document.documentElement,k='ws-arch-theme';
+try{var s=localStorage.getItem(k);if(s)r.setAttribute('data-theme',s)}catch(e){}
+b.addEventListener('click',function(){var dark=r.getAttribute('data-theme')==='dark'||(!r.getAttribute('data-theme')&&matchMedia('(prefers-color-scheme: dark)').matches);var n=dark?'light':'dark';r.setAttribute('data-theme',n);try{localStorage.setItem(k,n)}catch(e){}});
+document.addEventListener('keydown',function(e){if(e.key==='p'&&(e.metaKey||e.ctrlKey)){document.querySelectorAll('details.qa').forEach(function(d){d.open=true})}});
+window.addEventListener('beforeprint',function(){document.querySelectorAll('details.qa').forEach(function(d){d.open=true})});
+})();
+</script>
+</body>
+</html>

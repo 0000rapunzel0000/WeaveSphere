@@ -188,6 +188,7 @@ def edit_po_line(line_id: int, body: PoLineEdit, db=Depends(get_db), _=role("adm
     if changes:
         db.execute(f"UPDATE po_lines SET {', '.join(k + ' = :' + k for k in changes)}, locked = 1 WHERE id = :id",
                    {**changes, "id": line_id})
+        auto_po(db)  # what the person no longer covers is drafted now, not after the next unrelated receipt
     return po_list(db, l["po_id"])[0]
 
 

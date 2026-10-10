@@ -33,16 +33,16 @@ const intOrNull=v=>v===''||v==null?null:Number(v);
 // ---------- Roles & navigation ----------
 const ROLE_LABEL={owner:'Owner',admin:'Office / Admin',store:'Store Keeper',supervisor:'Floor Supervisor',qc:'QC Inspector'};
 const allowed={
- Owner:['Dashboard','Orders','Production','Inventory','Quality','Traceability','Dispatch','Tracking','Inbox','Reviews','Workforce','Accounts','Masters','Reports'],
- 'Office / Admin':['Dashboard','Orders','Production','Inventory','Quality','Traceability','Dispatch','Tracking','Inbox','Reviews','Workforce','Accounts','Masters'],
- 'Store Keeper':['Dashboard','Inventory','Orders','Dispatch','Traceability','Tracking'],
- 'Floor Supervisor':['Dashboard','Production','Orders','Traceability','Tracking','Reviews','Workforce'],
- 'QC Inspector':['Dashboard','Quality','Traceability','Tracking','Reviews'],
+ Owner:['Dashboard','Orders','Production','Inventory','Quality','Traceability','Dispatch','Tracking','Inbox','Reviews','Assistant','Workforce','Accounts','Masters','Reports'],
+ 'Office / Admin':['Dashboard','Orders','Production','Inventory','Quality','Traceability','Dispatch','Tracking','Inbox','Reviews','Assistant','Workforce','Accounts','Masters'],
+ 'Store Keeper':['Dashboard','Inventory','Orders','Dispatch','Traceability','Tracking','Assistant'],
+ 'Floor Supervisor':['Dashboard','Production','Orders','Traceability','Tracking','Reviews','Workforce','Assistant'],
+ 'QC Inspector':['Dashboard','Quality','Traceability','Tracking','Reviews','Assistant'],
  Buyer:['Tracking']};
-const navGroups=[['FACTORY',['Dashboard','Orders','Production','Inventory']],['QUALITY & DELIVERY',['Quality','Traceability','Dispatch','Tracking']],['BUYERS & AI',['Inbox','Reviews']],['PEOPLE & FINANCE',['Workforce','Accounts']],['SETUP',['Masters','Reports']]];
-const icons={Dashboard:'◫',Orders:'▤',Production:'▥',Inventory:'◈',Quality:'◉',Traceability:'⌕',Dispatch:'⇢',Tracking:'↗',Inbox:'✉',Reviews:'◐',Workforce:'♙',Accounts:'₹',Masters:'▦',Reports:'⌁'};
-const descriptions={Dashboard:'The shift, the order book and the floor at one glance.',Orders:'Create buyer orders, check yarn feasibility and follow each stage.',Production:'Assign job cards, update machines, record shift output and create QR rolls.',Inventory:'Receive yarn, issue material to production and act on shortfalls.',Quality:'Inspect rolls, capture defects and keep the rework loop moving.',Traceability:'Scan a roll and follow its order, machine, shift, operator and material history.',Dispatch:'Open a truck, scan passed rolls onto it, then close it to raise the invoice.',Tracking:'Buyer-facing order progress, share links and enquiry view.',Inbox:'Buyer messages, routed by Jev, with reply drafts from live order data.',Reviews:'AI decisions that were not confident enough. Accept or correct them.',Workforce:'Shift attendance and monthly wages.',Accounts:'Order costs, supplier bills, buyer receivables and monthly P&L.',Masters:'Buyers, suppliers, yarns, fabrics, recipes, machines, workers and shifts.',Reports:'Machine output, wages and month-end figures.'};
-const tamil={Dashboard:'கண்ணோட்டம்',Orders:'ஆர்டர்கள்',Production:'உற்பத்தி',Inventory:'சரக்கு',Quality:'தரம்',Traceability:'தடமறிதல்',Dispatch:'அனுப்புதல்',Tracking:'ஆர்டர் கண்காணிப்பு',Inbox:'செய்திகள்',Reviews:'AI சரிபார்ப்பு',Workforce:'பணியாளர்கள்',Accounts:'கணக்குகள்',Masters:'அடிப்படை தரவு',Reports:'அறிக்கைகள்'};
+const navGroups=[['FACTORY',['Dashboard','Orders','Production','Inventory']],['QUALITY & DELIVERY',['Quality','Traceability','Dispatch','Tracking']],['BUYERS & AI',['Inbox','Reviews','Assistant']],['PEOPLE & FINANCE',['Workforce','Accounts']],['SETUP',['Masters','Reports']]];
+const icons={Dashboard:'◫',Orders:'▤',Production:'▥',Inventory:'◈',Quality:'◉',Traceability:'⌕',Dispatch:'⇢',Tracking:'↗',Inbox:'✉',Reviews:'◐',Workforce:'♙',Accounts:'₹',Masters:'▦',Reports:'⌁',Assistant:'✦'};
+const descriptions={Dashboard:'The shift, the order book and the floor at one glance.',Orders:'Create buyer orders, check yarn feasibility and follow each stage.',Production:'Assign job cards, update machines, record shift output and create QR rolls.',Inventory:'Receive yarn, issue material to production and act on shortfalls.',Quality:'Inspect rolls, capture defects and keep the rework loop moving.',Traceability:'Scan a roll and follow its order, machine, shift, operator and material history.',Dispatch:'Open a truck, scan passed rolls onto it, then close it to raise the invoice.',Tracking:'Buyer-facing order progress, share links and enquiry view.',Inbox:'Buyer messages, routed by Jev, with reply drafts from live order data.',Reviews:'AI decisions that were not confident enough. Accept or correct them.',Workforce:'Shift attendance and monthly wages.',Accounts:'Order costs, supplier bills, buyer receivables and monthly P&L.',Masters:'Buyers, suppliers, yarns, fabrics, recipes, machines, workers and shifts.',Reports:'Machine output, wages and month-end figures.',Assistant:'Tell it what happened in plain words, as you would write in the notebook. It asks for anything missing, Jev checks the request, then it is saved through the same rules as the forms.'};
+const tamil={Dashboard:'கண்ணோட்டம்',Orders:'ஆர்டர்கள்',Production:'உற்பத்தி',Inventory:'சரக்கு',Quality:'தரம்',Traceability:'தடமறிதல்',Dispatch:'அனுப்புதல்',Tracking:'ஆர்டர் கண்காணிப்பு',Inbox:'செய்திகள்',Reviews:'AI சரிபார்ப்பு',Workforce:'பணியாளர்கள்',Accounts:'கணக்குகள்',Masters:'அடிப்படை தரவு',Reports:'அறிக்கைகள்',Assistant:'உதவியாளர்'};
 const STAGES=['Pending','Spinning','Weaving','Dyeing','In QC','Ready','Dispatched'];
 const ENUM={dept:['Office','QC','Production','Dispatch','Accounts'],intent:['status','quality_complaint','payment','new_order','delivery_change','other'],urgency:['low','med','high'],category:['mechanical','electrical','yarn_quality','operator'],severity:['low','med','high'],defect_type:['hole','colour_mismatch','uneven_weave','stain','other'],stage_at_fault:['spinning','weaving','dyeing']};
 const REVIEW_FIELDS={message:['dept','intent','urgency'],breakdown:['category','severity'],defect:['defect_type','stage_at_fault','severity']};
@@ -52,7 +52,7 @@ const rollCode=v=>{v=String(v??'').trim();return v.includes('roll=')?decodeURICo
 const rollUrl=qr=>location.origin+location.pathname+'#roll='+encodeURIComponent(qr);
 const scanButton=(target,id='')=>`<button type="button" class="secondary scan-btn" data-act="scan" data-target="${target}" ${id?`data-id="${id}"`:''} aria-label="Scan a roll QR with the camera">SCAN</button>`;
 
-let dirty=false,orderBuyer={},machineOrder={},role='Owner',page='Dashboard',me=null,lang='en',currentOrder='',currentToken='',traceRoll='',pendingRoll='',editMasterId='',masterKey='buyers',reportMonth=thisMonth(),shownFlash='',defectGroup='machine_shift',digestCache=null,poLines={},flash='',afterRender=null,renderSeq=0,toastTimer=null;
+let dirty=false,orderBuyer={},invoiceBuyer={},machineOrder={},role='Owner',page='Dashboard',me=null,lang='en',currentOrder='',currentToken='',traceRoll='',pendingRoll='',editMasterId='',masterKey='buyers',reportMonth=thisMonth(),shownFlash='',defectGroup='machine_shift',digestCache=null,poLines={},flash='',afterRender=null,renderSeq=0,toastTimer=null;
 try{lang=localStorage.getItem('everest-lang')||'en'}catch{}
 
 // ---------- Master data (read by every page for names) ----------
@@ -216,6 +216,19 @@ async function trackingPage(){
   panel('Enquiries for the office',table(['ORDER','BUYER','STAGE','TARGET / PASSED','READY BY','DEADLINE','ACTION'],orders.map(x=>`<tr><td class="mono-cell">#${x.id}</td><td>${esc(x.buyer)}</td><td>${badge(x.stage)}</td><td>${num(x.passed_m)} / ${num(x.qty_m)} m</td><td>${esc(x.expected_ready||'—')}</td><td>${esc(x.deadline)}</td><td><div class="inline-actions"><button data-act="open-track" data-id="${x.id}">VIEW</button><button data-act="order-link" data-token="${esc(x.token)}">COPY LINK</button></div></td></tr>`),'No orders yet.'),'BUYER CALLS / QUICK ANSWERS');
 }
 
+// The chat assistant: same requests as the forms, in plain words. Jev picks the skill and checks the request before it runs.
+async function assistantPage(){
+ const office=['Owner','Office / Admin'].includes(role);
+ const [threads,log]=await Promise.all([api('/assistant/chat'),office?api('/assistant/conversations'):null]);
+ const open=s=>['collecting','confirming'].includes(s);
+ const bubbles=threads.map(c=>c.messages.map(m=>`<div class="chat-msg ${m.from==='user'?'user':'bot'}">${esc(m.text)}</div>`).join('')+(open(c.status)?'':`<div class="chat-end">${esc(label(c.skill||'chat'))} · ${esc(c.status)}</div>`)).join('');
+ const rows=(log||[]).map(c=>`<tr><td>${esc(stamp(c.updated_at))}<span class="sub">${esc(c.channel)}${c.peer?' · +'+esc(c.peer):''}</span></td><td>${esc(c.username)}</td><td>${esc(label(c.skill||'—'))}</td><td>${esc(c.draft?.summary||c.messages[0]?.text||'')}</td><td>${c.jev==null?'—':pct(c.jev)}</td><td>${badge(c.status)}</td></tr>`);
+ afterRender=()=>{const t=$('#chatThread');if(t)t.scrollTop=t.scrollHeight;$('#chatInput')?.focus()};
+ return head('Assistant','PLAIN WORDS → CHECKED REQUEST')+
+  panel('Chat',`<div class="chat" id="chatThread">${bubbles||'<div class="empty">Try: “Loom 04 did 120 m on night shift for order 1, Arun, 8 hours” or “how much polyester is left?”</div>'}</div><form data-form="assistant" class="chat-form"><input id="chatInput" name="text" autocomplete="off" maxlength="2000" placeholder="Tell me what happened, or ask…" required aria-label="Message"><button class="primary">SEND</button></form><p class="help">Say <b>cancel</b> to drop a request, <b>yes</b> to confirm one. Every request runs with your own permissions.</p>`,'JEV PICKS THE SKILL · JEV CHECKS THE REQUEST')+
+  (log?panel('What the assistant did',table(['WHEN','WHO','SKILL','REQUEST','JEV MATCH','RESULT'],rows,'Nothing yet.'),'WEB + WHATSAPP'):'');
+}
+
 async function inboxPage(){
  const [msgs,orders]=await Promise.all([api('/messages'),api('/orders')]);
  orderBuyer=Object.fromEntries(orders.map(o=>[o.id,o.buyer_id]));
@@ -255,6 +268,7 @@ async function workforcePage(){
 async function accountsPage(){
  const owner=role==='Owner';
  const [recv,pay,pnl,costs]=await Promise.all([api('/reports/receivables'),api('/reports/payables'),owner?api('/reports/pnl?month='+reportMonth):null,owner?api('/reports/order-cost'):null]);
+ invoiceBuyer=Object.fromEntries(recv.map(i=>[i.id,i.buyer_id]));
  const outstanding=recv.reduce((s,x)=>s+x.outstanding,0),payable=pay.reduce((s,x)=>s+x.outstanding,0);
  const payFields=select('PARTY','party',[['buyer','Buyer'],['supplier','Supplier']])+select('BUYER / SUPPLIER','party_id',[...M.buyers.map(b=>['buyer:'+b.id,'Buyer · '+b.name]),...M.suppliers.map(s=>['supplier:'+s.id,'Supplier · '+s.name])])+select('INVOICE (BUYER PAYMENTS)','invoice_id',optional(recv.filter(i=>i.outstanding>0.005).map(i=>[i.id,`INV-${String(i.id).padStart(5,'0')} · ${i.buyer} · ${money(i.outstanding)} due`]),'Supplier payment (no invoice)'),'',false)+field('AMOUNT (₹)','amount','','number')+field('DATE','paid_on','','date',today())+field('REFERENCE','ref','Bank / UTR','text','',false);
  return head('Accounts','COSTING / PAYMENTS / MONTH-END',owner?monthForm():'')+'<div class="grid four">'+(pnl?kpi('REVENUE · '+esc(pnl.month),money(pnl.revenue),'INVOICED, EX-GST'):'')+kpi('BUYER RECEIVABLES',money(outstanding),recv.length+' INVOICES')+kpi('SUPPLIER PAYABLES',money(payable),'GRN BILLS − PAYMENTS')+(pnl?kpi('PROFIT / LOSS',money(pnl.profit),'REVENUE − YARN − WAGES − OVERHEAD',pnl.profit<0?'warn':''):'')+'</div>'+
@@ -288,7 +302,7 @@ async function reportsPage(){
  return head('Reports','OUTPUT / WAGES / MONTH-END',monthForm())+'<div class="grid four">'+kpi('OUTPUT · '+esc(reportMonth),num(machines.reduce((s,m)=>s+m.output,0)),'ALL MACHINES')+kpi('TOTAL WAGES',money(wages.total),'ATTENDANCE + PIECE')+kpi('PROFIT / LOSS',money(pnl.profit),'REVENUE '+money(pnl.revenue),pnl.profit<0?'warn':'')+kpi('ORDERS OVERDUE',orders.filter(isLate).length,'PAST DEADLINE, NOT READY')+'</div>'+panel('Output per machine',table(['MACHINE','KIND','OUTPUT','HOURS','BREAKDOWNS'],rows,'No machines yet.'),'FROM PRODUCTION ENTRIES')+'<div class="notice">EXPORT ↓ downloads the tables on screen as CSV. ⤓ prints or saves a PDF.</div>';
 }
 
-const pages={Dashboard:roleDashboard,Orders:orderPage,Production:productionPage,Inventory:inventoryPage,Quality:qualityPage,Traceability:tracePage,Dispatch:dispatchPage,Tracking:trackingPage,Inbox:inboxPage,Reviews:reviewsPage,Workforce:workforcePage,Accounts:accountsPage,Masters:masterPage,Reports:reportsPage};
+const pages={Dashboard:roleDashboard,Orders:orderPage,Production:productionPage,Inventory:inventoryPage,Quality:qualityPage,Traceability:tracePage,Dispatch:dispatchPage,Tracking:trackingPage,Inbox:inboxPage,Reviews:reviewsPage,Workforce:workforcePage,Accounts:accountsPage,Masters:masterPage,Reports:reportsPage,Assistant:assistantPage};
 async function render(quiet){
  if(!allowed[role].includes(page))page=role==='Buyer'?'Tracking':'Dashboard';
  navRender();
@@ -352,6 +366,7 @@ const handlers={
   if(editMasterId)await put(`/master/${masterKey}/${editMasterId}`,body);else await post('/master/'+masterKey,body);
   editMasterId='';await loadMasters();return'Saved.'},
  async message(d){const r=await post('/messages',{text:d.text,channel:d.channel,buyer_id:intOrNull(d.buyer_id),order_id:intOrNull(d.order_id)});flash=r.message.status==='routed'?`Routed to <b>${esc(r.message.dept)}</b> · ${esc(label(r.message.intent))} · urgency ${esc(r.message.urgency)} <span class="mono">(${pct(r.routing.confidence)})</span>`:aiLine(r.routing,'routing');return'Message logged.'},
+ async assistant(d){const t=$('#chatThread');if(t){t.querySelector('.empty')?.remove();t.insertAdjacentHTML('beforeend',`<div class="chat-msg user">${esc(d.text)}</div><div class="chat-msg bot typing">…</div>`);t.scrollTop=t.scrollHeight}$('#chatInput').value='';await post('/assistant/chat',{text:d.text});return''},
  async month(d){reportMonth=d.month||thisMonth();return''},
 };
 async function submit(form,e){
@@ -509,6 +524,7 @@ $('#view').addEventListener('change',async e=>{
  if(e.target.dataset.poLine){try{await put('/po-lines/'+e.target.dataset.poLine,{qty_kg:+e.target.value});dirty=false;await render();toast('Quantity saved. The system will no longer recompute this line.')}catch(err){toast(err.message,'error')}return}
  const form=e.target.form;
  if(form?.dataset.form==='grn'&&e.target.name==='po_line_id'&&e.target.value){const l=poLines[e.target.value];if(l){form.elements.supplier_id.value=l.supplier_id;form.elements.yarn_type_id.value=l.yarn_type_id;form.elements.qty_kg.value=l.open_kg;form.elements.rate.value=l.rate}return}
+ if(form?.dataset.form==='payment'&&e.target.name==='invoice_id'&&e.target.value){form.elements.party.value='buyer';form.elements.party_id.value='buyer:'+invoiceBuyer[e.target.value];return}  // an invoice names its buyer
  if(form?.dataset.form==='message'){
   if(e.target.name==='order_id'&&e.target.value)form.elements.buyer_id.value=orderBuyer[e.target.value]??'';
   if(e.target.name==='buyer_id'&&form.elements.order_id.value&&String(orderBuyer[form.elements.order_id.value])!==e.target.value)form.elements.order_id.value='';

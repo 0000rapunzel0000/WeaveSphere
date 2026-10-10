@@ -67,6 +67,33 @@ def finish_job(jid: int, db=Depends(get_db), _=role("admin", "supervisor")):
     return one(db, "SELECT * FROM job_cards WHERE id = ?", jid)
 
 
+class ReleaseIn(BaseModel):
+    job_ids: list[int] | None = None  # which of their jobs; default all open ones
+
+
+@router.post("/workers/{wid}/release")
+def release_worker(wid: int, body: ReleaseIn, db=Depends(get_db), _=role("admin", "supervisor")):
+    """Free a worker from the jobs they run now (to move them elsewhere). A running machine stops, with a note, until
+    someone else is put on its job: live output is never credited to a person who isn't there."""
+    w = one(db, "SELECT * FROM workers WHERE id = ?", wid)
+    out = []
+    with tx(db):
+        accrue(db)  # their output up to now stays theirs
+        jobs = rows(db.execute("SELECT j.id, j.order_id, j.machine_id, m.name machine, m.status FROM job_cards j "
+                               "JOIN machines m ON m.id = j.machine_id WHERE j.status = 'open' AND j.operator_id = ?", (wid,)))
+        for j in jobs:
+            if body.job_ids is not None and j["id"] not in body.job_ids:
+                continue
+            db.execute("UPDATE job_cards SET operator_id = NULL, last_tick = NULL WHERE id = ?", (j["id"],))
+            stopped = j["status"] == "Running"
+            if stopped:
+                db.execute("UPDATE machines SET status = 'Idle' WHERE id = ?", (j["machine_id"],))
+                insert(db, "machine_status_log", {"machine_id": j["machine_id"], "status": "Idle",
+                                                  "note": f"stopped: {w['name']} was moved off this job; put an operator on it to restart"})
+            out.append({"job_id": j["id"], "machine": j["machine"], "order_id": j["order_id"], "stopped": stopped})
+    return {"worker": w["name"], "released": out}
+
+
 @router.post("/machines/{mid}/status")
 def machine_status(mid: int, body: StatusIn, db=Depends(get_db), _=role("admin", "supervisor")):
     m = one(db, "SELECT * FROM machines WHERE id = ?", mid)

@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from mill import (accounts, auth, db, defects, digest, dispatch, inventory, livefloor, masters, messages, orders,
+from mill import (accounts, assistant, auth, db, defects, digest, dispatch, inventory, livefloor, masters, messages, orders,
                   production, purchasing, quality, reviews, voice, workforce)
 from mill.config import CORS_ORIGINS
 
@@ -28,7 +28,7 @@ async def lifespan(_):
 app = FastAPI(title="Everest Textile Mills", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
 for area in (auth, masters, orders, inventory, reviews, production, quality, dispatch, workforce, accounts, messages,
-             defects, purchasing, digest, voice):
+             defects, purchasing, digest, assistant, voice):
     app.include_router(area.router)
 app.include_router(voice.web)
 

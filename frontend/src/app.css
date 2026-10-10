@@ -430,3 +430,15 @@ a.primary,a.secondary{display:inline-flex;align-items:center;justify-content:cen
 .register .sun{background:#00000008}
 .register .today{box-shadow:inset 0 0 0 2px #d49a62}
 .register .tot{font-weight:600;color:#222;min-width:44px}
+
+/* Chat assistant (paper theme) */
+.chat{max-height:56vh;min-height:220px;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:2px 2px 14px}
+.chat-msg{max-width:78%;padding:10px 13px;border:1px solid #2927221f;background:#f6f3ec;color:#292722;font-size:12px;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere}
+.chat-msg.user{align-self:flex-end;border-color:#a85f3940;background:#a85f3912}
+.chat-msg.bot{align-self:flex-start}
+.chat-msg.typing{color:#9b958b;letter-spacing:.2em}
+.chat-end{align-self:center;font:8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#8a8379;margin:2px 0 10px}
+.chat-form{display:flex;gap:8px}
+.chat-form input{flex:1;min-width:0;min-height:44px;border:1px solid #2927222c;background:#fffefa;color:#292722;padding:10px 12px;outline:none;font:13px var(--sans)}
+.chat-form input:focus{border-color:#a85f39}.chat-form input::placeholder{color:#a39b90}
+@media(max-width:720px){.chat-msg{max-width:90%}.chat-form input{font-size:16px}}

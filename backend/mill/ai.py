@@ -19,14 +19,14 @@ def _post(path, body, timeout):
         return json.load(r)
 
 
-def decide(state, questions: dict[str, tuple[str, dict[str, str]]]) -> dict[str, dict]:
+def decide(state, questions: dict[str, tuple[str, dict[str, str]]], timeout=5) -> dict[str, dict]:
     """Jev choice questions, all in one call: {name: (instructions, {option: description})}
     -> {name: {choice, probs, confidence}}.
     If Jev fails, or answers outside the options, confidence is 0 so the caller sends it to human review."""
     try:
         answers = _post("/alpha/decisions", {"model": JEV_MODEL, "state": state, "questions": {
             name: {"type": "choice", "instructions": instr, "criteria": opts}
-            for name, (instr, opts) in questions.items()}}, timeout=5)["answers"]
+            for name, (instr, opts) in questions.items()}}, timeout=timeout)["answers"]
     except Exception as e:
         logging.warning("Jev failed, sending to human review: %r", e)
         answers = {}
@@ -50,14 +50,19 @@ def probability(state, instructions: str, true: str, false: str) -> float | None
         return None
 
 
-def _chat(content, schema=None):
-    body = {"model": CHAT_MODEL, "messages": [{"role": "user", "content": content}]}
+def _chat(content, schema=None, model=None):
+    body = {"model": model or CHAT_MODEL, "messages": [{"role": "user", "content": content}]}
     if schema:
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
     text = _post("/v1/chat/completions", body, timeout=30)["choices"][0]["message"]["content"].strip()
     if schema and text.startswith("```"):  # some models wrap JSON in a Markdown fence despite response_format
         text = text.split("\n", 1)[1].rsplit("```", 1)[0]
     return json.loads(text) if schema else text
+
+
+def chat_json(prompt: str, schema: dict, model: str | None = None) -> dict:
+    """The chat model's answer as JSON matching `schema` (used by the assistant to read a conversation)."""
+    return _chat(prompt, schema, model)
 
 
 LANGS = {"en": "English", "ta": "Tamil", "hi": "Hindi"}

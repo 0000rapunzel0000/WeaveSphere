@@ -60,3 +60,22 @@ CREATE TABLE IF NOT EXISTS digests (
   source      TEXT NOT NULL CHECK (source IN ('ai', 'template')),
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 ) STRICT;
+
+-- The chat assistant (web and WhatsApp): one row per conversation that ends in one request.
+CREATE TABLE IF NOT EXISTS bot_conversations (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id),
+  channel    TEXT NOT NULL CHECK (channel IN ('web', 'whatsapp')),
+  peer       TEXT NOT NULL DEFAULT '',          -- the WhatsApp number; '' on the web
+  status     TEXT NOT NULL DEFAULT 'collecting'
+             CHECK (status IN ('collecting', 'confirming', 'done', 'failed', 'cancelled', 'closed')),
+  messages   TEXT NOT NULL DEFAULT '[]',        -- [{"from": "user" | "bot", "text": ...}]
+  skill      TEXT,                              -- the skill Jev picked; 'plan' for several steps in one message
+  difficulty TEXT,                              -- Jev's rating of the message: easy / medium / hard
+  model      TEXT,                              -- the chat model used for it (picked by difficulty)
+  draft      TEXT,                              -- {"skill", "values", "names", "summary"} once complete; {"choices"} when asking which
+  jev        REAL,                              -- Jev's probability that the request matches the conversation
+  result     TEXT,                              -- what the system answered when it was run
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+) STRICT;

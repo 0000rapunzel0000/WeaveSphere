@@ -106,12 +106,14 @@ def login(body: Login, db=Depends(get_db)):
         FAILED[name] = recent + [now]
         raise HTTPException(401, "wrong username or password")
     FAILED.pop(name, None)
+    db.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (int(time.time()),))
+    return {"token": token_for(u), "role": u["role"], "username": u["username"]}
+
+
+def token_for(u, hours=SESSION_HOURS):
     now = int(time.time())
-    db.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (now,))
-    token = jwt.encode({"sub": str(u["id"]), "username": u["username"], "role": u["role"], "iat": now,
-                        "exp": now + int(SESSION_HOURS * 3600), "jti": secrets.token_urlsafe(16)},
-                       jwt_secret(), algorithm="HS256")
-    return {"token": token, "role": u["role"], "username": u["username"]}
+    return jwt.encode({"sub": str(u["id"]), "username": u["username"], "role": u["role"], "iat": now,
+                       "exp": now + int(hours * 3600), "jti": secrets.token_urlsafe(16)}, jwt_secret(), algorithm="HS256")
 
 
 @router.post("/auth/logout")

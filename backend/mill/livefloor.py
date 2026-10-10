@@ -31,9 +31,10 @@ def yarn_at_loom(db, oid):
 
 
 def crew(db, job):
-    """Operator and shift that live output is credited to: the job card's, else whoever last ran the machine."""
+    """Operator and shift that live output is credited to: the job card's. Only a job card made with neither (older data)
+    falls back to whoever last ran the machine; a job whose operator was taken off stays without one until reassigned."""
     op, sh = job["operator_id"], job["shift_id"]
-    if not (op and sh):
+    if not op and not sh:
         last = db.execute("SELECT operator_id, shift_id FROM production_entries WHERE machine_id = ? ORDER BY id DESC "
                           "LIMIT 1", (job["machine_id"],)).fetchone()
         op, sh = op or (last and last[0]), sh or (last and last[1])

@@ -14,8 +14,9 @@ This document describes the system as it stands. The phone/voice order desk is b
 |---|---|---|
 | Backend API | `cd backend && python3 -m uvicorn app:app --port 8000` | http://localhost:8000 (API docs at `/docs`) |
 | Frontend | `cd frontend && npm install && npx vite --port 5173` | http://localhost:5173 |
-| Fresh demo data | `cd backend && DB_PATH=demo.db python3 seed.py` (then start the backend with `DB_PATH=demo.db`) | |
+| Fresh demo data | `cd backend && rm -f demo.db* && DB_PATH=demo.db python3 demo_setup.py` (then start the backend with `DB_PATH=demo.db SIM_SPEED=60`) | |
 | Tests | `cd backend && python3 -m pytest -q tests` | |
+| WhatsApp bridge (optional) | `cd whatsapp && npm install && npm start`, then scan the QR (see `docs/assistant.md`) | |
 
 The frontend talks to the backend through `/api` (Vite proxies it to port 8000). AI needs `OPENROUTER_API_KEY` in
 `backend/.env`; without it everything still works and AI decisions go to the human review queue.
@@ -39,6 +40,7 @@ Buyers have no account: each order has a secret tracking link (`/track.html#trac
 | Page | Owner | Office | Store | Floor | QC |
 |---|:-:|:-:|:-:|:-:|:-:|
 | Dashboard (role-specific) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Assistant (chat) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Orders | ✓ | ✓ | ✓ | ✓ | |
 | Production | ✓ | ✓ | | ✓ | |
 | Inventory (yarn, POs) | ✓ | ✓ | ✓ | | |
@@ -97,7 +99,7 @@ everyone can read. Machine status can only change through the status control, so
 - For each yarn: **need = what open orders still need + reorder level − stock − yarn already on order.**
   When need > 0 a draft PO line is made, from the supplier whose latest rate is lowest (last 10 receipts), with the
   reasoning written on the line.
-- Drafts are recomputed after every order, receipt and issue. A person's work is never overwritten: approved POs,
+- Drafts are recomputed after every order, receipt, issue, line edit and cancellation, and when the looms draw store yarn. A person's work is never overwritten: approved POs,
   POs raised by hand and lines someone edited count as "on order" and are left alone.
 - Office/Owner approve ("placed with the supplier"), edit quantities, or cancel (not once yarn has arrived).
 - Deliveries are booked against an approved PO line from the GRN form; a PO shows "received" once its lines are met.
@@ -189,7 +191,18 @@ everyone can read. Machine status can only change through the status control, so
 - Monthly wages (Owner, Office): daily rate × days present, or piece rate × output
   (live floor output is credited to the job card's operator).
 
-### 3.16 Everywhere
+### 3.16 Chat assistant (web and WhatsApp)
+- Staff type what happened in plain words ("Loom 04 did 130 m on night shift for order 1, Arun, 8 hours") or ask
+  ("how much polyester is left?"); the assistant asks for anything missing and saves one checked request.
+- **64 skills** cover every area of the app (`backend/mill/skills/`, one module per area). **Jev picks the skill**; the
+  chat model fills its fields; code matches every name to a record and drops any value the person never wrote;
+  **Jev checks** the finished request against the conversation — confident → saved, otherwise the person replies YES.
+- It runs through the normal API as the person chatting, so roles and every rule apply. Each conversation is one
+  request and ends on done / cancel / "thanks" / 30 quiet minutes / a clearly new request, so old messages never leak in.
+- **Assistant** page for every staff role; owner and office see a log of everything it did (web and WhatsApp).
+- WhatsApp through Baileys (`whatsapp/`), linked by QR; each WhatsApp number maps to a mill account. Details: `docs/assistant.md`.
+
+### 3.17 Everywhere
 - Live screens refresh every 10 s, but never while someone is typing, has a form half-filled or a dialog open.
 - Navigation in English or Tamil. Errors shown as plain-language messages; a result notice (e.g. Jev's triage)
   stays on screen through the auto-refresh until your next action.
@@ -210,6 +223,9 @@ everyone can read. Machine status can only change through the status control, so
 | Reply drafts (EN/TA/HI) | Chat model (`google/gemini-2.5-flash`) | "Drafter unavailable" message |
 | Challan photo reading | Chat model (vision) | Type the GRN by hand |
 | Digest wording | Chat model | Plain template |
+| Assistant: which skill | Jev (64 options) | The chat model picks, and every request needs a YES |
+| Assistant: fill the fields | Chat model | "AI unavailable, use the app" |
+| Assistant: does the request match the chat | Jev | The person confirms with YES |
 
 All through OpenRouter with one key. AI never does arithmetic: stock, costs, invoices, PO quantities and alerts are code.
 
@@ -220,13 +236,14 @@ All through OpenRouter with one key. AI never does arithmetic: stock, costs, inv
 - **Backend:** Python 3.12, FastAPI, SQLite (WAL mode, STRICT tables, parameterised SQL, `BEGIN IMMEDIATE` write locks).
   `backend/app.py` assembles one router per business area in `backend/mill/`:
   `config, db, auth, ai, masters, orders, inventory, purchasing, production, livefloor, quality, defects, dispatch,
-  workforce, accounts, messages, reviews, digest`. About 70 endpoints.
+  workforce, accounts, messages, reviews, digest, assistant` plus `mill/skills/` (the assistant's skills). About 75 endpoints.
+  `whatsapp/bot.mjs` (Node, Baileys) bridges WhatsApp to `/assistant/whatsapp`.
 - **Frontend:** plain JavaScript modules built with Vite: `index.html` + `src/app.js` (landing page and staff app, GSAP
   scroll animation) and `track.html` + `src/track.js` (the buyer's page). Libraries: GSAP, qrcode, jsQR.
-- **Data (32 tables and one view):** users, app_secrets, revoked_tokens · buyers, suppliers, yarn_types, fabric_types,
+- **Data (33 tables and one view):** users, app_secrets, revoked_tokens · buyers, suppliers, yarn_types, fabric_types,
   bom, machines, workers, shifts · orders · grn, material_issues, `yarn_stock` (view) · purchase_orders, po_lines,
   po_receipts · job_cards, machine_status_log, production_entries, attendance · rolls, qc_records, defect_alerts ·
-  dispatches, dispatch_items, invoices, payments · buyer_messages, ai_reviews, digests.
+  dispatches, dispatch_items, invoices, payments · buyer_messages, ai_reviews, digests, bot_conversations.
 - **Derived, never stored:** stock, order stage, PO "received", outstanding amounts.
 
 ---
@@ -247,6 +264,8 @@ All through OpenRouter with one key. AI never does arithmetic: stock, costs, inv
 | `CREDIT_DAYS` | 30 | Days until an invoice is overdue |
 | `DIGEST_HOUR` | unset | Build the digest at this hour daily (else on first visit) |
 | `CORS_ORIGINS` | `http://localhost:5173` | Allowed browser origins |
+| `BOT_SECRET` / `BOT_PHONES` | — | WhatsApp bridge secret; `number=username,…` links WhatsApp numbers to accounts |
+| `PUBLIC_URL` | `http://localhost:5173` | Base of tracking links the assistant sends |
 
 ---
 

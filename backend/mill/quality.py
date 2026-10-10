@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from mill.auth import role, user
 from mill.db import get_db, insert, one, rows, tx
 from mill.defects import after_qc
+from mill.production import roll_code
 from mill.reviews import decide
 
 router = APIRouter()
@@ -24,12 +25,12 @@ def qc_queue(db=Depends(get_db), _=Depends(user)):
         WHERE r.status IN ('pending_qc', 'rework') ORDER BY r.id"""))
 
 
-@router.post("/qc/{qr}")
+@router.post("/qc/{qr:path}")
 def qc_check(qr: str, body: QcIn, db=Depends(get_db), u=role("admin", "qc")):
     if body.result != "pass" and not (body.defect_type or body.notes):
         raise HTTPException(422, "give a defect type or notes for rework/reject")
     with tx(db):
-        r = one(db, "SELECT * FROM rolls WHERE qr = ?", qr)
+        r = one(db, "SELECT * FROM rolls WHERE qr = ?", roll_code(qr))
         if r["status"] not in ("pending_qc", "rework"):
             raise HTTPException(409, f"roll is {r['status']}, not awaiting QC")
         rec = body.model_dump()

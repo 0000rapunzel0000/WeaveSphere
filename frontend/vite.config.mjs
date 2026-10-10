@@ -7,6 +7,8 @@ import path from 'node:path';
 export default defineConfig({
   cacheDir: path.join(os.tmpdir(), 'everest-textile-vite-cache'),
   publicDir: 'public',
+  // Two pages: the app, and the buyer's tracking page (with the call to the order desk).
+  build: { rollupOptions: { input: { main: 'index.html', track: 'track.html' } } },
   // The app calls /api/...; in development that goes to the backend on port 8000.
   server: {
     proxy: {

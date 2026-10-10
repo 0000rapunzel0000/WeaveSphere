@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#121315">
+<title>Your order · Everest Textile Mills</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#121315;--line:#ffffff17;--text:#f3f1ea;--muted:#9da49c;--copper:#d49a62;--copper2:#e8bb8c;--red:#e0604a;--mono:'DM Mono',monospace}
+*{box-sizing:border-box;margin:0}
+html,body{min-height:100%;background:var(--ink)}
+body{min-height:100svh;font-family:Manrope,system-ui,sans-serif;color:var(--text);-webkit-font-smoothing:antialiased;
+  background:radial-gradient(1100px 760px at 60% 25%,#2a221c 0%,#151618 55%,#0f1011 100%)}
+.wrap{width:min(1080px,100%);margin:0 auto;padding:28px 16px 40px}
+.brand{display:flex;align-items:center;gap:12px;font:500 11px var(--mono);letter-spacing:.18em;text-transform:uppercase;color:#c6c0b4;margin:0 4px 26px}
+.mark{width:30px;height:30px;border:1px solid #d49a6288;color:var(--copper);display:grid;place-items:center;font:500 16px Manrope;letter-spacing:0}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:20px;align-items:start}
+.card{border:1px solid var(--line);border-radius:28px;background:linear-gradient(170deg,#1d1e21,#151618);padding:28px 26px 26px;box-shadow:0 40px 120px #000a}
+.eyebrow{font:500 11px var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+h1{font-weight:500;font-size:44px;letter-spacing:-.06em;line-height:1;margin:10px 0 0}
+h2{font-weight:500;font-size:34px;letter-spacing:-.05em;line-height:1}
+.pill{display:inline-flex;align-items:center;gap:8px;margin-top:16px;padding:7px 12px;border-radius:999px;border:1px solid #d49a6266;color:var(--copper2);font:500 11px var(--mono);letter-spacing:.14em;text-transform:uppercase}
+.pill i{width:7px;height:7px;border-radius:50%;background:var(--copper);box-shadow:0 0 10px var(--copper)}
+.bar{height:6px;border-radius:6px;background:#ffffff12;margin:24px 0 8px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#b0683a,var(--copper2))}
+.barlabel{display:flex;justify-content:space-between;font:500 11px var(--mono);letter-spacing:.12em;color:var(--muted)}
+.steps{display:grid;grid-template-columns:repeat(7,1fr);margin:26px 0 6px;position:relative}
+.steps div{position:relative;text-align:center;font:500 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#7d837b}
+.steps div:before{content:"";display:block;width:12px;height:12px;border-radius:50%;margin:0 auto 10px;background:#2e2f32;border:1px solid #4a4c50;position:relative;z-index:1}
+.steps div:not(:last-child):after{content:"";position:absolute;top:6px;left:50%;right:-50%;height:1px;background:#3a3b3f}
+.steps div.done{color:#d9d3c8}.steps div.done:before{background:var(--copper);border-color:var(--copper)}
+.steps div.done:not(:last-child):after{background:#d49a6288}
+.steps div.now:before{box-shadow:0 0 0 5px #d49a6233}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:22px}
+.stat{border:1px solid var(--line);border-radius:16px;padding:16px;background:#ffffff05}
+.stat b{display:block;font-weight:500;font-size:28px;letter-spacing:-.05em;margin:10px 0 4px}
+.stat small{font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.trucks{margin-top:18px;font-size:14px;line-height:1.6;color:#cfc9be}
+.trucks b{color:var(--text);font-weight:500}
+.find{display:flex;gap:10px;margin-top:20px}
+.find input{flex:1;min-width:0;height:48px;border-radius:12px;border:1px solid #ffffff26;background:#111214;color:var(--text);padding:0 14px;font:inherit;font-size:16px}
+.find button,.ghost{height:48px;border-radius:12px;padding:0 18px;border:1px solid #d49a6288;background:#d49a6218;color:var(--copper2);font:500 12px var(--mono);letter-spacing:.12em;text-transform:uppercase;cursor:pointer}
+.note{margin-top:12px;color:var(--muted);font-size:14px;line-height:1.5}
+.err{color:#f0a493}
+/* the phone */
+.phone{display:flex;flex-direction:column;gap:20px;position:sticky;top:20px}
+.orb{position:relative;width:170px;height:170px;margin:4px auto 0;display:grid;place-items:center}
+.orb i{position:absolute;inset:0;border-radius:50%;border:1px solid #d49a6240;transform:scale(var(--s,1));transition:transform .12s ease-out,opacity .3s}
+.orb i:nth-child(2){inset:20px;border-color:#d49a6255}
+.orb i:nth-child(3){inset:40px;border-color:#d49a6277;background:radial-gradient(circle,#d49a6222,transparent 70%)}
+.orb .face{position:relative;width:80px;height:80px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(150deg,#2b2621,#1d1e21);border:1px solid #d49a6266;font:500 36px Manrope;color:var(--copper)}
+.idle .orb i{opacity:.45}
+.live .orb i{animation:breathe 3.2s ease-in-out infinite}
+.live .orb i:nth-child(2){animation-delay:.4s}.live .orb i:nth-child(3){animation-delay:.8s}
+@keyframes breathe{50%{opacity:.55}}
+.speaking .orb .face{border-color:var(--copper);box-shadow:0 0 40px #d49a6240}
+.status{text-align:center;font:500 12px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);min-height:16px}
+.status b{color:var(--text);font-weight:500}
+.who{text-align:center;font-size:20px;letter-spacing:-.02em;color:#cfc9be;min-height:28px;margin-top:-8px;transition:color .2s}
+.speaking .who{color:var(--copper2)}
+.controls{display:flex;justify-content:center;align-items:center;gap:22px}
+.controls button{font:inherit;cursor:pointer;border:0}
+.round{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;background:var(--copper);color:#16120e;box-shadow:0 12px 34px #d49a6255;transition:transform .15s,background .2s}
+.round:active{transform:scale(.95)}
+.round svg{width:30px;height:30px}
+.round.end{background:var(--red);box-shadow:0 12px 34px #e0604a55;color:#fff}
+.round.end svg{transform:rotate(135deg)}
+.round:disabled{opacity:.6;cursor:default}
+.small{width:52px;height:52px;border-radius:50%;background:#26272a;border:1px solid var(--line);color:#e9e4da;display:grid;place-items:center}
+.small svg{width:22px;height:22px}
+.small[aria-pressed=true]{background:#f3f1ea;color:#16120e}
+.small[hidden]{display:grid;visibility:hidden}  /* keeps its slot so the call button stays centred */
+.langs{text-align:center;font:500 11px var(--mono);letter-spacing:.14em;color:#8d938b}
+.foot{text-align:center;font-size:12px;color:#7d837b;line-height:1.5}
+@media (max-width:900px){.grid{grid-template-columns:1fr}.phone{position:static}}
+@media (max-width:560px){.wrap{padding:20px 14px 32px}.card{border-radius:22px;padding:22px 18px}h1{font-size:34px}
+  .steps{grid-template-columns:1fr;gap:10px;margin-top:22px}.steps div{text-align:left;display:flex;align-items:center;gap:10px}
+  .steps div:before{margin:0}.steps div:not(:last-child):after{display:none}
+  .stats{grid-template-columns:1fr 1fr}.stats .stat:last-child{grid-column:1/-1}.stat b{font-size:24px}}
+@media (prefers-reduced-motion:reduce){.live .orb i{animation:none}.orb i{transition:none}}
+</style>
+</head>
+<body class="idle">
+<div class="wrap">
+  <div class="brand"><span class="mark">E</span>Everest Textile Mills</div>
+  <div class="grid">
+    <section class="card" id="order" aria-live="polite">
+      <div class="eyebrow">Order tracking</div>
+      <h1>Your order</h1>
+      <p class="note">Loading…</p>
+    </section>
+    <aside class="card phone" aria-live="polite">
+      <div class="eyebrow">Order desk</div>
+      <h2>Talk to the mill</h2>
+      <div class="orb" aria-hidden="true"><i></i><i></i><i></i><div class="face">E</div></div>
+      <div class="status" id="status">Tap to call</div>
+      <div class="who" id="who"></div>
+      <div class="controls">
+        <button class="small" id="mute" aria-pressed="false" aria-label="Mute" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+        <button class="round" id="call" aria-label="Call the order desk">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z"/></svg></button>
+        <span class="small" style="visibility:hidden" aria-hidden="true"></span>
+      </div>
+      <div class="langs">ENGLISH · தமிழ் · हिन्दी</div>
+      <p class="foot" id="deskNote">An AI assistant answers with live order data. Calls are recorded and passed to the office, who can call you back.</p>
+    </aside>
+  </div>
+</div>
+<script type="module" src="/src/track.js"></script>
+</body>
+</html>

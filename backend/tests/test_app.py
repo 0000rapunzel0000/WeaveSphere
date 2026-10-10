@@ -456,3 +456,78 @@ def test_audit_fixes():
     # Business dates are local, not SQLite's UTC CURRENT_DATE.
     import datetime
     assert inv["issued_on"] == datetime.date.today().isoformat()
+
+
+def test_voice_agent():
+    """Retell tools: signed requests only, and a caller only hears about their own orders."""
+    import hashlib, hmac, json as js, time as tm
+    from mill import voice
+    os.environ["RETELL_API_KEY"] = "test-key"
+    def post(path, body, key="test-key"):
+        raw, ts = js.dumps(body).encode(), str(int(tm.time() * 1000))
+        sig = hmac.new(key.encode(), raw + ts.encode(), hashlib.sha256).hexdigest()
+        return c.post(path, content=raw, headers={"x-retell-signature": f"v={ts},d={sig}", "content-type": "application/json"})
+    h = owner_headers()
+    m = lambda t, d: ok(c.post(f"/master/{t}", json=d, headers=h))["id"]  # noqa: E731
+    acme = m("buyers", {"name": "Voice Acme Textiles", "phone": "+91 98765 43210"})
+    m("buyers", {"name": "Someone Else"})
+    fab = m("fabric_types", {"name": "Voice cloth"})
+    oid = ok(c.post("/orders", json={"buyer_id": acme, "fabric_type_id": fab, "colour": "red", "qty_m": 100,
+                                     "deadline": "2099-01-01", "price_per_m": 1}, headers=h))["id"]
+    me, stranger = {"from_number": "+919876543210"}, {"from_number": "+919000000000"}
+
+    assert post("/voice/retell/tools/order_status", {"args": {"order_number": oid}}, key="wrong").status_code == 401
+    assert c.post("/voice/retell/tools/order_status", json={"args": {"order_number": oid}}).status_code == 401
+    os.environ["VOICE_SECRET"] = "s" * 40  # the shared-secret route for keys without Retell's webhook badge
+    assert c.post("/voice/retell/tools/identify_caller", json={"call": me}, headers={"x-voice-secret": "s" * 40}).status_code == 200
+    assert c.post("/voice/retell/tools/identify_caller", json={"call": me}, headers={"x-voice-secret": "s" * 39}).status_code == 401
+    del os.environ["VOICE_SECRET"]
+    assert ok(post("/voice/retell/tools/identify_caller", {"call": me}))["company"] == "Voice Acme Textiles"
+    assert ok(post("/voice/retell/tools/order_status", {"call": me, "args": {"order_number": f"#{oid}"}}))["ordered_metres"] == 100
+    assert ok(post("/voice/retell/tools/order_status", {"call": stranger, "args": {"order_number": oid}}))["verified"] is False
+    # web test calls have no number: the company name must match the order's buyer
+    assert ok(post("/voice/retell/tools/order_status", {"call": {}, "args": {"order_number": oid, "company_name": "acme textiles"}}))["verified"]
+    assert ok(post("/voice/retell/tools/order_status", {"call": {}, "args": {"order_number": oid, "company_name": "Someone Else"}}))["verified"] is False
+    assert ok(post("/voice/retell/tools/invoices_due", {"call": me, "args": {"order_number": oid}}))["invoices"] == []
+    # Browser calls opened from a tracking link: our server put the token in the call metadata.
+    token = ok(c.get(f"/orders/{oid}", headers=h))["token"]
+    linked = {"metadata": {"track_token": token}}
+    who = ok(post("/voice/retell/tools/identify_caller", {"call": linked}))
+    assert who["company"] == "Voice Acme Textiles" and who["calling_from_tracking_link_of_order"] == oid
+    assert ok(post("/voice/retell/tools/order_status", {"call": linked, "args": {"order_number": oid}}))["verified"]
+    other = ok(c.post("/orders", json={"buyer_id": m("buyers", {"name": "Third Co"}), "fabric_type_id": fab, "colour": "x",
+                                       "qty_m": 1, "deadline": "2099-01-01", "price_per_m": 1}, headers=h))["id"]
+    assert ok(post("/voice/retell/tools/order_status", {"call": linked, "args": {"order_number": other, "company_name": "Third Co"}}))["verified"] is False
+    key = os.environ.pop("RETELL_API_KEY")
+    assert c.post("/voice/web-call", json={"track": "nope"}).status_code == 503  # no Retell key: no calls, no network
+    os.environ["RETELL_API_KEY"] = key
+
+    # The finished call lands in the Inbox once, even if Retell retries the webhook.
+    real = ai.decide
+    ai.decide = lambda state, qs: {n: {"choice": next(iter(o)), "probs": {}, "confidence": 1.0} for n, (_, o) in qs.items()}
+    try:
+        call = {**me, "call_id": "call_123", "transcript": "Agent: Hello\nUser: where is my order", "call_analysis": {"call_summary": "Asked about order status."}}
+        for _ in range(2):
+            ok(post("/voice/retell/webhook", {"event": "call_analyzed", "call": call}))
+    finally:
+        ai.decide = real
+    logged = [x for x in ok(c.get("/messages", headers=h)) if x["channel"] == "phone" and x["buyer_id"] == acme]
+    assert len(logged) == 1 and logged[0]["text"].startswith("Phone call: Asked about order status.")
+
+
+def test_scanned_roll_links():
+    """A scanner gun types the label's whole link; trace, QC and truck loading all take it."""
+    h = owner_headers()
+    m = lambda t, d: ok(c.post(f"/master/{t}", json=d, headers=h))["id"]  # noqa: E731
+    buyer, fab = m("buyers", {"name": "Scan Co"}), m("fabric_types", {"name": "Scan cloth"})
+    loom, shift = m("machines", {"name": "Loom S", "kind": "weaving"}), m("shifts", {"name": "S shift"})
+    op = m("workers", {"name": "S op", "wage_type": "daily", "rate": 1})
+    oid = ok(c.post("/orders", json={"buyer_id": buyer, "fabric_type_id": fab, "colour": "x", "qty_m": 5,
+                                     "deadline": "2099-01-01", "price_per_m": 1}, headers=h))["id"]
+    qr = ok(c.post("/rolls", json={"order_id": oid, "machine_id": loom, "shift_id": shift, "operator_id": op, "metres": 5}, headers=h))["qr"]
+    link = f"http://mill.example/#roll={qr}"
+    from urllib.parse import quote
+    assert ok(c.get("/rolls/" + quote(link, safe=""), headers=h))["qr"] == qr
+    ok(c.post("/qc/" + quote(link, safe=""), json={"result": "pass"}, headers=h))
+    did = ok(c.post("/dispatches", json={"order_id": oid, "vehicle_no": "S1", "driver": "d"}, headers=h))["id"]
+    assert ok(c.post(f"/dispatches/{did}/scan", json={"qr": f"  {link}\n"}, headers=h))["rolls"] == 1

@@ -3,6 +3,8 @@
    API base: window.EVEREST_API if set, else /api (the Vite dev server proxies /api to localhost:8000). */
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import QRCode from 'qrcode';
+import jsQR from 'jsqr';
 gsap.registerPlugin(ScrollTrigger);
 (()=>{'use strict';
 const API=window.EVEREST_API||'/api';
@@ -45,6 +47,10 @@ const STAGES=['Pending','Spinning','Weaving','Dyeing','In QC','Ready','Dispatche
 const ENUM={dept:['Office','QC','Production','Dispatch','Accounts'],intent:['status','quality_complaint','payment','new_order','delivery_change','other'],urgency:['low','med','high'],category:['mechanical','electrical','yarn_quality','operator'],severity:['low','med','high'],defect_type:['hole','colour_mismatch','uneven_weave','stain','other'],stage_at_fault:['spinning','weaving','dyeing']};
 const REVIEW_FIELDS={message:['dept','intent','urgency'],breakdown:['category','severity'],defect:['defect_type','stage_at_fault','severity']};
 const label=s=>String(s??'').replaceAll('_',' ');
+// A roll's code from what was typed or scanned: a scanner gun reading a label types its whole link (…#roll=ETM-…).
+const rollCode=v=>{v=String(v??'').trim();return v.includes('roll=')?decodeURIComponent(v.split('roll=')[1].split('&')[0]).trim():v};
+const rollUrl=qr=>location.origin+location.pathname+'#roll='+encodeURIComponent(qr);
+const scanButton=(target,id='')=>`<button type="button" class="secondary scan-btn" data-act="scan" data-target="${target}" ${id?`data-id="${id}"`:''} aria-label="Scan a roll QR with the camera">SCAN</button>`;
 
 let dirty=false,orderBuyer={},machineOrder={},role='Owner',page='Dashboard',me=null,lang='en',currentOrder='',currentToken='',traceRoll='',pendingRoll='',editMasterId='',masterKey='buyers',reportMonth=thisMonth(),defectGroup='machine_shift',digestCache=null,poLines={},flash='',afterRender=null,renderSeq=0,toastTimer=null;
 try{lang=localStorage.getItem('everest-lang')||'en'}catch{}
@@ -172,12 +178,12 @@ async function qualityPage(){
  const repRows=rep.rows.map(r=>defectGroup==='type'?`<tr><td>${esc(label(r.label))}</td><td>${r.defects}</td><td>${pct(r.share)}</td></tr>`:`<tr><td>${esc(r.label)}</td><td>${r.checks}</td><td>${r.defects}</td><td>${pct(r.rate)}</td></tr>`);
  const repPanel=panel('Where defects come from',`<div class="inline-actions" style="margin-bottom:10px">${groups.map(([g,t])=>`<button data-act="defect-group" data-id="${g}" ${g===defectGroup?'class="active" aria-pressed="true"':''}>${t.toUpperCase()}</button>`).join('')}</div>`+table(defectGroup==='type'?['DEFECT','COUNT','SHARE OF DEFECTS']:['GROUP','QC CHECKS','FAILED','FAILURE RATE'],repRows,'No QC checks in the last '+rep.days+' days.'),`LAST ${rep.days} DAYS · MILL ${rep.mill.rate==null?'—':pct(rep.mill.rate)} FAILING`);
  const rows=queue.map(r=>`<tr><td class="mono-cell">${esc(r.qr)}</td><td>#${r.order_id}</td><td>${esc(r.machine)}</td><td>${num(r.metres)} m</td><td>${badge(r.status)}</td><td><div class="inline-actions"><button data-act="qc-pass" data-qr="${esc(r.qr)}">PASS</button><button data-act="scan-roll" data-qr="${esc(r.qr)}">INSPECT</button><button data-act="trace" data-qr="${esc(r.qr)}">TRACE</button></div></td></tr>`);
- const fields=field('ROLL QR','qr','Scan or type e.g. ETM-…')+select('RESULT','result',[['pass','Pass'],['rework','Rework'],['reject','Reject']])+select('DEFECT TYPE','defect_type',optional(ENUM.defect_type.map(d=>[d,label(d)]),'Let Jev decide from the notes'),'',false)+textarea('NOTES','notes','What did you see? Needed for rework / reject.');
+ const fields=`<label class="field"><span>ROLL QR</span><div class="scan-row"><input name="qr" placeholder="Scan or type e.g. ETM-…" required>${scanButton('qc')}</div></label>`+select('RESULT','result',[['pass','Pass'],['rework','Rework'],['reject','Reject']])+select('DEFECT TYPE','defect_type',optional(ENUM.defect_type.map(d=>[d,label(d)]),'Let Jev decide from the notes'),'',false)+textarea('NOTES','notes','What did you see? Needed for rework / reject.');
  return head('Quality control','ROLL INSPECTION / TRACEABILITY')+'<div class="grid three">'+kpi('WAITING FOR QC',queue.filter(r=>r.status==='pending_qc').length,'NEW ROLLS')+kpi('REWORK LOOP',queue.filter(r=>r.status==='rework').length,'BACK FOR RE-INSPECTION')+kpi('PASSED IN STORE',fg.reduce((s,x)=>s+x.rolls,0),num(fg.reduce((s,x)=>s+x.metres,0))+' M READY TO SHIP')+'</div><div class="split" style="margin-top:11px">'+formStart('qc','Scan roll · record inspection',fields,'SAVE QC RESULT','NOTES → JEV CLASSIFIES THE DEFECT')+panel('QC queue',table(['ROLL','ORDER','MACHINE','QTY','STATUS','ACTION'],rows,'No rolls waiting for inspection.')+'<div class="notice">Rework returns to this queue. Rejected rolls are blocked from dispatch.</div>','SCAN → RESULT → TRACE')+'</div>'+(alerts.length?panel('Defect hotspots',table(['WHERE','FAILED','WHAT TO DO','STATUS'],alertRows),'RAISED AUTOMATICALLY · CLEARS WHEN THE RATE IS NORMAL'):'')+repPanel;
 }
 
 async function tracePage(){
- let content=`<form class="panel form-grid two" data-form="trace"><label class="field"><span>ROLL QR / SCAN</span><input name="qr" value="${esc(traceRoll)}" placeholder="ETM-…" autofocus></label><div class="form-actions" style="align-items:end"><button class="primary">TRACE ROLL</button></div></form>`;
+ let content=`<form class="panel form-grid two" data-form="trace"><label class="field"><span>ROLL QR / SCAN</span><div class="scan-row"><input name="qr" value="${esc(traceRoll)}" placeholder="ETM-…" autofocus>${scanButton('trace')}</div></label><div class="form-actions" style="align-items:end"><button class="primary">TRACE ROLL</button></div></form>`;
  if(!traceRoll)return head('Roll traceability','QR SCAN / MATERIAL HISTORY')+content+panel('Trace any roll','<p class="help">Scan its QR code or type the roll code to see its order, yarn issued, machine, shift, operator, QC history and dispatch.</p>');
  let r;try{r=await api('/rolls/'+encodeURIComponent(traceRoll.trim()))}catch(e){return head('Roll traceability','QR SCAN / MATERIAL HISTORY')+content+`<div class="alert">${esc(e.message==='not found'?'No roll found with that code.':e.message)}</div>`}
  const yarn=r.yarn_issued.map(i=>`${esc(i.count)} ${esc(i.material)} · ${esc(i.colour)} · ${num(i.qty_kg)} kg · ${esc(i.issued_on)}`).join('<br>')||'No yarn issued to this order yet.';
@@ -190,7 +196,7 @@ async function dispatchPage(){
  const [orders,fg,ds]=await Promise.all([api('/orders'),api('/finished-goods'),api('/dispatches')]);
  const open=await Promise.all(ds.filter(d=>d.status==='open').map(async d=>{const [detail,passed]=await Promise.all([api('/dispatches/'+d.id),api(`/rolls?order_id=${d.order_id}&status=passed`)]);const loaded=new Set(detail.packing_list.map(p=>p.qr));return{...detail,waiting:passed.filter(r=>!loaded.has(r.qr))}}));
  const ready=orderChoices(orders.filter(o=>o.stage!=='Dispatched'&&fg.some(f=>f.order_id===o.id)));
- const trucks=open.map(d=>`<section class="panel" style="margin-top:11px"><div class="panel-head"><h2>Truck ${esc(d.vehicle_no)} · ${esc(d.driver)}</h2><span class="mono">DISPATCH ${d.id} · ORDER #${d.order_id} · ${esc(d.buyer)}</span></div><form data-form="scan" class="form-grid two"><input type="hidden" name="did" value="${d.id}"><label class="field"><span>SCAN ROLL QR ONTO THIS TRUCK</span><input name="qr" placeholder="ETM-…" required autofocus></label><div class="form-actions" style="align-items:end"><button class="primary">ADD ROLL</button><button type="button" class="secondary" data-act="close-dispatch" data-id="${d.id}">CLOSE TRUCK & INVOICE</button></div></form>${d.waiting.length?`<p class="help">Or tap a passed roll of order #${d.order_id} to load it:</p><div class="pick-list">${d.waiting.map(r=>`<button type="button" data-act="load-roll" data-id="${d.id}" data-qr="${esc(r.qr)}">${esc(r.qr)} · ${num(r.metres)} m</button>`).join('')}</div>`:`<p class="help">No more passed rolls of order #${d.order_id} waiting.</p>`}${table(['ROLL','METRES'],d.packing_list.map(p=>`<tr><td class="mono-cell">${esc(p.qr)}</td><td>${num(p.metres)} m</td></tr>`),'No rolls scanned yet.')}<p class="help">${d.rolls} rolls · ${num(d.metres)} m on this truck.</p></section>`).join('');
+ const trucks=open.map(d=>`<section class="panel" style="margin-top:11px"><div class="panel-head"><h2>Truck ${esc(d.vehicle_no)} · ${esc(d.driver)}</h2><span class="mono">DISPATCH ${d.id} · ORDER #${d.order_id} · ${esc(d.buyer)}</span></div><form data-form="scan" class="form-grid two"><input type="hidden" name="did" value="${d.id}"><label class="field"><span>SCAN ROLL QR ONTO THIS TRUCK</span><div class="scan-row"><input name="qr" placeholder="ETM-…" required autofocus>${scanButton('dispatch',d.id)}</div></label><div class="form-actions" style="align-items:end"><button class="primary">ADD ROLL</button><button type="button" class="secondary" data-act="close-dispatch" data-id="${d.id}">CLOSE TRUCK & INVOICE</button></div></form>${d.waiting.length?`<p class="help">Or tap a passed roll of order #${d.order_id} to load it:</p><div class="pick-list">${d.waiting.map(r=>`<button type="button" data-act="load-roll" data-id="${d.id}" data-qr="${esc(r.qr)}">${esc(r.qr)} · ${num(r.metres)} m</button>`).join('')}</div>`:`<p class="help">No more passed rolls of order #${d.order_id} waiting.</p>`}${table(['ROLL','METRES'],d.packing_list.map(p=>`<tr><td class="mono-cell">${esc(p.qr)}</td><td>${num(p.metres)} m</td></tr>`),'No rolls scanned yet.')}<p class="help">${d.rolls} rolls · ${num(d.metres)} m on this truck.</p></section>`).join('');
  const fgRows=fg.map(f=>`<tr><td class="mono-cell">#${f.order_id}</td><td>${esc(f.buyer)}</td><td>${esc(f.fabric)} · ${esc(f.colour)}</td><td>${f.rolls}</td><td>${num(f.metres)} m</td></tr>`);
  const hist=ds.map(d=>`<tr><td class="mono-cell">${d.id}</td><td>${esc(stamp(d.created_at))}</td><td>#${d.order_id} · ${esc(d.buyer)}</td><td>${esc(d.vehicle_no)} · ${esc(d.driver)}</td><td>${badge(d.status)}</td><td>${d.total==null?'—':money(d.total)}</td><td><div class="inline-actions"><button data-act="print-dispatch" data-id="${d.id}">PACKING LIST</button>${d.invoice_id?`<button data-act="print-invoice" data-id="${d.id}">INVOICE</button>`:''}</div></td></tr>`);
  return head('Finished goods & dispatch','PASSED ROLLS / SHIPMENTS')+'<div class="grid three">'+kpi('PASSED ROLLS IN STORE',fg.reduce((s,f)=>s+f.rolls,0),'READY TO SHIP')+kpi('TRUCKS LOADING',open.length,'OPEN DISPATCHES')+kpi('READY METRES',num(fg.reduce((s,f)=>s+f.metres,0))+' m','QC PASSED')+'</div>'+
@@ -201,13 +207,9 @@ async function dispatchPage(){
 function renderTracking(t,link=''){
  const idx=Math.max(0,STAGES.indexOf(t.stage));
  const disp=t.dispatches.map(d=>`${esc(stamp(d.created_at))} · ${esc(d.vehicle_no)} · ${d.rolls} rolls · ${num(d.metres)} m (${esc(d.status)})`).join(' / ')||'Not dispatched yet.';
- return`<section class="panel tracking-card"><div class="panel-head"><div><span class="mono">ORDER #${t.order_no}</span><h2 style="margin:8px 0">${esc(t.fabric)} · ${esc(t.colour)}</h2></div>${badge(t.stage)}</div><div class="tracking-timeline" style="grid-template-columns:repeat(${STAGES.length},1fr)">${STAGES.map((x,i)=>`<div class="timeline-step ${i<=idx?'done':''}">${x.toUpperCase()}</div>`).join('')}</div><div class="grid three">${kpi('PRODUCED',num(t.produced_m)+' m',`TARGET ${num(t.target_m)} m · ${t.progress_pct}%`)}${kpi('PASSED QC',num(t.passed_m)+' m',`${t.rolls_passed} OF ${t.rolls_produced} ROLLS`)}${kpi('EXPECTED READY',t.expected_ready?esc(t.expected_ready):'—',(t.expected_ready?'':'NEEDS A FEW DAYS OF OUTPUT · ')+'DEADLINE '+esc(t.deadline))}</div><p class="help">Dispatch: ${disp}</p>${link?`<div class="form-actions"><button class="secondary" data-act="order-link" data-token="${esc(link)}">COPY SHARE LINK</button></div>`:''}</section>`;
+ return`<section class="panel tracking-card"><div class="panel-head"><div><span class="mono">ORDER #${t.order_no}</span><h2 style="margin:8px 0">${esc(t.fabric)} · ${esc(t.colour)}</h2></div>${badge(t.stage)}</div><div class="tracking-timeline" style="grid-template-columns:repeat(${STAGES.length},1fr)">${STAGES.map((x,i)=>`<div class="timeline-step ${i<=idx?'done':''}">${x.toUpperCase()}</div>`).join('')}</div><div class="grid three">${kpi('PRODUCED',num(t.produced_m)+' m',`TARGET ${num(t.target_m)} m · ${t.progress_pct}%`)}${kpi('PASSED QC',num(t.passed_m)+' m',`${t.rolls_passed} OF ${t.rolls_produced} ROLLS`)}${kpi('EXPECTED READY',t.expected_ready?esc(t.expected_ready):'—',(t.expected_ready?'':'NEEDS A FEW DAYS OF OUTPUT · ')+'DEADLINE '+esc(t.deadline))}</div><p class="help">Dispatch: ${disp}</p>${link?`<div class="form-actions"><a class="secondary" href="${esc(trackUrl(link))}" target="_blank" rel="noopener">OPEN BUYER PAGE ↗</a><button class="secondary" data-act="order-link" data-token="${esc(link)}">COPY SHARE LINK</button></div>`:''}</section>`;
 }
 async function trackingPage(){
- if(role==='Buyer'){
-  if(!currentToken)return head('Your order','ORDER TRACKING')+`<form data-form="tracking-token" class="panel form-grid two"><label class="field"><span>TRACKING LINK OR CODE</span><input name="token" placeholder="Paste the link the mill sent you" required></label><div class="form-actions" style="align-items:end"><button class="primary">VIEW ORDER</button></div></form>`;
-  try{return head('Your order','ORDER TRACKING')+renderTracking(await api('/track/'+encodeURIComponent(currentToken)))}catch{currentToken='';return head('Your order','ORDER TRACKING')+'<div class="alert">That tracking link is not valid. Ask the mill for a new one.</div>'}
- }
  const orders=await api('/orders');
  let card='';if(currentOrder){const o=await api('/orders/'+currentOrder);card=renderTracking(o,o.token)}
  return head('Order tracking','SHAREABLE STATUS / BUYER ENQUIRY')+panel('Look up an order',`<form data-form="tracking-select" class="form-grid two">${select('ORDER','order',orderChoices(orders),currentOrder)}<div class="form-actions" style="align-items:end"><button class="primary">OPEN BUYER VIEW</button></div></form>`)+card+
@@ -322,12 +324,11 @@ const handlers={
   await post('/production',body);
   if(form.querySelector('[name=make_roll]')?.checked){const roll=await post('/rolls',{order_id:body.order_id,machine_id:body.machine_id,shift_id:body.shift_id,operator_id:body.operator_id,metres:body.output});afterRender=()=>qrModal(roll);return'Roll '+roll.qr+' created.'}
   return'Shift output recorded.'},
- async qc(d){const r=await post('/qc/'+encodeURIComponent(d.qr.trim()),{result:d.result,defect_type:d.defect_type||null,notes:d.notes||null});flash=`Roll ${esc(d.qr)}: <b>${esc(r.qc.result)}</b>. `+aiLine(r.classification,'classified it')+alertLine(r.defect_alerts);return'QC result saved.'},
- async trace(d){traceRoll=d.qr.trim();return''},
- async 'tracking-token'(d){const t=d.token.includes('track=')?decodeURIComponent(d.token.split('track=')[1]):d.token.trim();currentToken=t;history.replaceState(null,'','#track='+encodeURIComponent(t));return''},
+ async qc(d){d.qr=rollCode(d.qr);const r=await post('/qc/'+encodeURIComponent(d.qr),{result:d.result,defect_type:d.defect_type||null,notes:d.notes||null});flash=`Roll ${esc(d.qr)}: <b>${esc(r.qc.result)}</b>. `+aiLine(r.classification,'classified it')+alertLine(r.defect_alerts);return'QC result saved.'},
+ async trace(d){traceRoll=rollCode(d.qr);return''},
  async 'tracking-select'(d){currentOrder=d.order;return''},
  async dispatch(d){if(!d.order_id)throw Error('No order has QC-passed rolls to ship yet.');await post('/dispatches',{order_id:+d.order_id,vehicle_no:d.vehicle_no,driver:d.driver});return'Truck opened. Scan rolls onto it.'},
- async scan(d){try{await post(`/dispatches/${d.did}/scan`,{qr:d.qr.trim()})}catch(e){flash=`<b>${esc(e.message)}</b>`;await render();throw e}return'Roll '+d.qr.trim()+' loaded.'},
+ async scan(d){const qr=rollCode(d.qr);try{await post(`/dispatches/${d.did}/scan`,{qr})}catch(e){flash=`<b>${esc(e.message)}</b>`;await render();throw e}return'Roll '+qr+' loaded.'},
  async attendance(d,form){const ids=[...form.querySelectorAll('[name=worker_ids]:checked')].map(x=>+x.value);if(!ids.length)throw Error('Tick at least one worker.');await post('/attendance',{shift_id:+d.shift_id,work_date:d.work_date,worker_ids:ids});return`Attendance saved for ${ids.length} worker(s).`},
  async payment(d){const [party,pid]=d.party_id.split(':');if(party!==d.party)throw Error(`Pick a ${d.party} in "Buyer / Supplier".`);await post('/payments',{party,party_id:+pid,amount:+d.amount,invoice_id:party==='buyer'?intOrNull(d.invoice_id):null,paid_on:d.paid_on,ref:d.ref||null});return'Payment recorded.'},
  async master(d){
@@ -346,8 +347,56 @@ async function submit(form,e){
 }
 
 // ---------- Buttons ----------
-function qrModal(roll){$('#modalContent').innerHTML=`<div class="eyebrow"><i></i> ROLL IDENTIFICATION</div><h2>${esc(roll.qr)}</h2><p class="help">Scan to open its traceability record. You can also print the roll card.</p><div class="qr-box" id="qrCode"></div><p class="mono">ORDER #${esc(roll.order_id)} · ${num(roll.metres)} M · ${esc(label(roll.status))}</p><button type="button" class="secondary" onclick="window.print()">PRINT QR LABEL</button>`;$('#modal').showModal();if(window.QRCode)new QRCode($('#qrCode'),{text:location.origin+location.pathname+'#roll='+encodeURIComponent(roll.qr),width:120,height:120,correctLevel:QRCode.CorrectLevel.M});else $('#qrCode').innerHTML=`<span class="qr-fallback">QR library offline<br>${esc(roll.qr)}</span>`}
-function copyLink(t){const url=location.origin+location.pathname+'#track='+encodeURIComponent(t);navigator.clipboard?.writeText(url).then(()=>toast('Buyer tracking link copied.')).catch(()=>toast(url))}
+// ---------- Roll labels and the camera scanner ----------
+// The label's QR is the roll's link, so any phone camera or scanner gun opens its traceability record.
+async function qrModal(roll){
+ const r=await api('/rolls/'+encodeURIComponent(roll.qr)).catch(()=>roll);  // the full record, for the label text
+ const svg=await QRCode.toString(rollUrl(r.qr),{type:'svg',margin:0,errorCorrectionLevel:'M'});
+ const label=`<div class="roll-label"><div class="rl-qr">${svg}</div><div class="rl-text"><div class="rl-brand">EVEREST TEXTILE MILLS</div><div class="rl-code">${esc(r.qr)}</div><div class="rl-big">${num(r.metres)} m</div><div>ORDER #${esc(r.order_id)}${r.buyer?' · '+esc(r.buyer):''}</div>${r.order?`<div>${esc(r.order.fabric)} · ${esc(r.order.colour)}</div>`:''}${r.machine?`<div>${esc(r.machine)} · ${esc(r.shift)}${r.operator?' · '+esc(r.operator):''}</div>`:''}${r.made_on?`<div>MADE ${esc(r.made_on)}</div>`:''}</div></div>`;
+ $('#labelSheet').innerHTML=label;
+ $('#modalContent').innerHTML=`<div class="eyebrow"><i></i> ROLL LABEL · 100 × 75 MM</div><h2>${esc(r.qr)}</h2><p class="help">Stick it on the roll. Any phone camera or scanner gun opens its record.</p><div class="label-preview">${label}</div><div class="form-actions"><button type="button" class="primary" data-act="print-label">PRINT LABEL</button></div>`;
+ $('#modal').showModal();
+}
+function printLabel(){document.body.classList.add('print-label');window.print();setTimeout(()=>document.body.classList.remove('print-label'),500)}
+
+// Camera scanning: the browser's own QR detector where there is one (Chrome, Android), jsQR otherwise (iPhone).
+let scanStream=null,scanLoop=null;
+function stopScan(){cancelAnimationFrame(scanLoop);scanLoop=null;scanStream?.getTracks().forEach(t=>t.stop());scanStream=null}
+async function startScan(target,id){
+ $('#modalContent').innerHTML=`<div class="eyebrow"><i></i> SCAN A ROLL</div><h2>Point at the roll's QR</h2><div class="scan-view"><video id="scanVideo" playsinline muted></video><i></i></div><p class="help" id="scanStatus">Starting the camera…</p><div class="form-actions"><button type="button" class="secondary" data-act="scan-done">DONE</button></div>`;
+ $('#modal').showModal();
+ try{scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false})}
+ catch(e){$('#scanStatus').innerHTML=`<b>Camera unavailable.</b> ${/notallowed|permission/i.test(e.name+e.message)?'Allow the camera for this site.':'The camera needs HTTPS (or localhost).'} You can still type or use a scanner gun.`;return}
+ const video=$('#scanVideo');video.srcObject=scanStream;await video.play().catch(()=>{});
+ $('#scanStatus').textContent=target==='dispatch'?'Scan rolls one after another; each loads onto the truck.':'Hold steady…';
+ const detector='BarcodeDetector' in window?new BarcodeDetector({formats:['qr_code']}):null;
+ const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
+ let last='',lastAt=0,busy=false,next=0;
+ const tick=async t=>{
+  if(!scanStream)return;scanLoop=requestAnimationFrame(tick);
+  if(busy||t<next||video.readyState<2)return;busy=true;next=t+150;
+  try{
+   let raw='';
+   if(detector)raw=(await detector.detect(video))[0]?.rawValue||'';
+   else{canvas.width=video.videoWidth;canvas.height=video.videoHeight;ctx.drawImage(video,0,0);raw=jsQR(ctx.getImageData(0,0,canvas.width,canvas.height).data,canvas.width,canvas.height)?.data||''}
+   const code=rollCode(raw);
+   if(code&&(code!==last||performance.now()-lastAt>3000)){last=code;lastAt=performance.now();navigator.vibrate?.(60);await scanned(target,id,code)}
+  }catch{}finally{busy=false}
+ };
+ scanLoop=requestAnimationFrame(tick);
+}
+async function scanned(target,id,code){
+ if(target==='dispatch'){  // keep scanning: each roll goes straight onto the truck
+  try{await post(`/dispatches/${id}/scan`,{qr:code});$('#scanStatus').innerHTML=`<b>Loaded ${esc(code)}.</b> Next roll…`}
+  catch(e){$('#scanStatus').innerHTML=`<b>${esc(code)}: ${esc(e.message)}</b>`}
+  return}
+ stopScan();$('#modal').close();
+ if(target==='trace'){traceRoll=code;return render()}
+ const form=$('form[data-form=qc]');if(form){form.elements.qr.value=code;form.elements.result.focus();toast('Scanned '+code+'. Choose the result.')}
+}
+// Buyers get their own page (track.html): their order and a call to the order desk, outside the staff app.
+const trackUrl=t=>location.origin+'/track.html#track='+encodeURIComponent(t);
+function copyLink(t){const url=trackUrl(t);navigator.clipboard?.writeText(url).then(()=>toast('Buyer tracking link copied.')).catch(()=>toast(url))}
 async function dispatchModal(id,kind){
  const d=await api('/dispatches/'+id),inv=d.invoice;
  if(kind==='invoice'&&inv)$('#modalContent').innerHTML=`<div class="eyebrow"><i></i> EVEREST TEXTILE MILLS · TAX INVOICE</div><h2>INV-${String(inv.id).padStart(5,'0')}</h2><p>${esc(d.buyer)}${d.buyer_gstin?' · GSTIN '+esc(d.buyer_gstin):''}<br>${esc(d.buyer_address||'')}</p><p>Order #${d.order_id} · Dispatch ${d.id} · ${esc(inv.issued_on)} · Vehicle ${esc(d.vehicle_no)}</p>${table(['DESCRIPTION','QUANTITY','RATE','AMOUNT'],[`<tr><td>${esc(d.fabric)} · ${esc(d.colour)} (${d.rolls} rolls)</td><td>${num(inv.metres)} m</td><td>${money(inv.rate)} / m</td><td>${money(inv.subtotal)}</td></tr>`,`<tr><td colspan="3">GST @ ${inv.gst_rate}%</td><td>${money(inv.gst)}</td></tr>`,`<tr><td colspan="3"><b>TOTAL</b></td><td><b>${money(inv.total)}</b></td></tr>`])}<button class="secondary" type="button" onclick="window.print()">PRINT / SAVE PDF</button>`;
@@ -373,6 +422,9 @@ async function action(act,el){
   if(act==='qc-pass'){await post('/qc/'+encodeURIComponent(el.dataset.qr),{result:'pass'});await render();return toast('Roll '+el.dataset.qr+' passed.')}
   if(act==='trace'){traceRoll=el.dataset.qr;return setPage('Traceability')}
   if(act==='roll-qr')return qrModal({qr:el.dataset.qr,order_id:el.dataset.order,metres:el.dataset.metres,status:el.dataset.status});
+  if(act==='print-label')return printLabel();
+  if(act==='scan')return startScan(el.dataset.target,el.dataset.id);
+  if(act==='scan-done'){stopScan();$('#modal').close();return el.closest('#modal')&&render()}
   if(act==='close-dispatch'){if(!confirm('Close this truck and raise the invoice? No more rolls can be added.'))return;const d=await post(`/dispatches/${id}/close`);flash=`Dispatch ${d.id} closed · invoice INV-${String(d.invoice.id).padStart(5,'0')} for <b>${money(d.invoice.total)}</b> (${d.rolls} rolls, ${num(d.metres)} m).`;await render();return dispatchModal(id,'invoice')}
   if(act==='load-roll'){try{await post(`/dispatches/${id}/scan`,{qr:el.dataset.qr})}catch(e){flash=`<b>${esc(e.message)}</b>`;await render();throw e}await render();return toast('Roll '+el.dataset.qr+' loaded.')}
   if(act==='print-invoice')return dispatchModal(id,'invoice');
@@ -415,12 +467,12 @@ async function startSession(t){
  token=t;store.set('everest-token',t);
  me=await api('/me');role=ROLE_LABEL[me.role];await loadMasters();
  page='Dashboard';
- if(pendingRoll&&allowed[role].includes('Traceability')){traceRoll=pendingRoll;page='Traceability'}
+ if(pendingRoll&&allowed[role].includes('Traceability')){traceRoll=rollCode(pendingRoll);page='Traceability'}
  pendingRoll='';openApp();
 }
 async function submitLogin(e){
  e.preventDefault();const identity=$('#loginIdentity').value.trim(),password=$('#loginPassword').value;
- if(accessMode==='Buyer'){currentToken=identity.includes('track=')?decodeURIComponent(identity.split('track=')[1]):identity;role='Buyer';page='Tracking';history.replaceState(null,'','#track='+encodeURIComponent(currentToken));return openApp()}
+ if(accessMode==='Buyer'){location.href=trackUrl(identity.includes('track=')?decodeURIComponent(identity.split('track=')[1]):identity);return}
  try{const r=await post('/auth/login',{username:identity,password});await startSession(r.token)}catch(err){showAuthMessage(err.message)}
 }
 async function firstSetup(){
@@ -433,6 +485,7 @@ function signOut(){if(token)fetch(API+'/auth/logout',{method:'POST',headers:{Aut
 // ---------- Events ----------
 $('#sideNav').addEventListener('click',e=>{const b=e.target.closest('[data-page]');if(b)setPage(b.dataset.page)});
 $('#view').addEventListener('click',e=>{const nav=e.target.closest('[data-page]');if(nav)return setPage(nav.dataset.page);const act=e.target.closest('[data-act]');if(act)return action(act.dataset.act,act);const mt=e.target.closest('[data-master]');if(mt){masterKey=mt.dataset.master;editMasterId='';render()}});
+$('#modal').addEventListener('close',()=>{const was=!!scanStream;stopScan();if(was&&page==='Dispatch')render(true)});  // camera off; show rolls loaded by camera
 $('#modal').addEventListener('click',e=>{const act=e.target.closest('[data-act]');if(act){e.preventDefault();action(act.dataset.act,act)}});
 $('#view').addEventListener('submit',e=>{const f=e.target.closest('form[data-form]');if(f)submit(f,e)});
 $('#view').addEventListener('change',async e=>{
@@ -583,7 +636,7 @@ initStoryScroll();
 // ---------- Start ----------
 (async()=>{
  showGate();
- if(location.hash.startsWith('#track=')){currentToken=decodeURIComponent(location.hash.slice(7));role='Buyer';page='Tracking';return openApp()}
+ if(location.hash.startsWith('#track=')){location.replace('/track.html'+location.hash);return}  // links sent before the buyer page existed
  if(location.hash.startsWith('#roll='))pendingRoll=decodeURIComponent(location.hash.slice(6));
  if(token){try{return await startSession(token)}catch{token=null;store.set('everest-token',null)}}
  if(pendingRoll){$('#landing').classList.add('hidden');$('#gate').classList.remove('hidden');return}

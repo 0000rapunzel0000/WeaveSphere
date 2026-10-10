@@ -3,8 +3,6 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f5f2ec"><title>Everest Textile Mills · Operations</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet"><link rel="stylesheet" href="src/app.css">
-<!-- QR generation is optional; roll IDs remain visible if the browser is offline. -->
-<script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head><body>
 <main id="landing">
 <section id="opening" class="opening" aria-label="Everest Textile Mills introduction">
@@ -48,5 +46,5 @@
  <aside class="sidebar"><a class="brand" href="#dashboard"><span class="brand-mark">E</span><span>EVEREST<small>TEXTILE OPERATIONS</small></span></a><div class="workspace-chip"><span class="online-dot"></span> FACTORY WORKSPACE <b>LIVE</b></div><nav id="sideNav" class="side-nav" aria-label="Main navigation"></nav><div class="side-bottom"><button id="languageToggle" class="side-button">தமிழ் &nbsp; / &nbsp; EN</button><button id="roleSwitch" class="side-button"><span id="roleName">OWNER</span><span>SIGN OUT ↗</span></button><div class="local-save"><i></i> CONNECTED TO MILL SERVER</div></div></aside>
  <main class="main"><header class="topbar"><div><span class="crumb">EVEREST /</span> <span id="pageCrumb">OVERVIEW</span></div><div class="top-actions"><span class="shift-chip"><i></i> <span id="userChip">SIGNED IN</span></span><button id="topLang" class="quiet-button top-only" type="button" aria-label="Switch language">தமிழ் / EN</button><button id="topSignOut" class="quiet-button top-only" type="button">SIGN OUT</button><button id="exportButton" class="quiet-button">EXPORT ↓</button><button id="printButton" class="icon-button" aria-label="Print or save PDF">⤓</button></div></header><div id="view" class="view"></div><footer class="page-foot"><span>EVEREST TEXTILE MILLS</span><span>OPERATIONS SYSTEM · LIVE MILL DATA</span><span id="lastSaved">READY</span></footer></main>
 </div>
-<dialog id="modal"><form method="dialog"><button class="modal-close" aria-label="Close">×</button><div id="modalContent"></div></form></dialog><div id="toast" class="toast" role="status"></div>
+<dialog id="modal"><form method="dialog"><button class="modal-close" aria-label="Close">×</button><div id="modalContent"></div></form></dialog><div id="toast" class="toast" role="status"></div><div id="labelSheet" aria-hidden="true"></div>
 <script type="module" src="/src/app.js"></script></body></html>

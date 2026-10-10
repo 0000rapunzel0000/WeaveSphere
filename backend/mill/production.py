@@ -144,6 +144,14 @@ def floor(db=Depends(get_db), _=Depends(user)):
             "sim_speed": SIM_SPEED}
 
 
+def roll_code(scanned: str) -> str:
+    """A roll's code from whatever was scanned or typed: the code itself, or the label's link (…/#roll=ETM-…),
+    which is what a scanner gun types when it reads the QR."""
+    from urllib.parse import unquote
+    v = (scanned or "").strip()
+    return unquote(v.split("roll=", 1)[1]).split("&")[0].strip() if "roll=" in v else v
+
+
 @router.post("/rolls")
 def create_roll(body: RollIn, db=Depends(get_db), _=role("admin", "supervisor")):
     """The QR code encodes `qr`; the client renders it as an image."""
@@ -159,13 +167,13 @@ def list_rolls(order_id: int | None = None, status: Literal["pending_qc", "passe
                            "ORDER BY id LIMIT 500", (order_id, order_id, status, status)))
 
 
-@router.get("/rolls/{qr}")
+@router.get("/rolls/{qr:path}")
 def trace_roll(qr: str, db=Depends(get_db), _=Depends(user)):
     """Traceability: roll -> order, machine, shift, operator, yarn issued, QC history, dispatch."""
     r = one(db, """SELECT r.*, m.name machine, m.kind stage, s.name shift, w.name operator, b.name buyer
         FROM rolls r JOIN machines m ON m.id = r.machine_id JOIN shifts s ON s.id = r.shift_id
         JOIN workers w ON w.id = r.operator_id JOIN orders o ON o.id = r.order_id JOIN buyers b ON b.id = o.buyer_id
-        WHERE r.qr = ?""", qr)
+        WHERE r.qr = ?""", roll_code(qr))
     return {**r,
             "order": tracking(db, one(db, "SELECT * FROM orders WHERE id = ?", r["order_id"])),
             "yarn_issued": rows(db.execute("""SELECT i.*, y.count, y.material, y.colour FROM material_issues i

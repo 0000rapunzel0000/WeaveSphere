@@ -226,8 +226,10 @@ CREATE TABLE IF NOT EXISTS buyer_messages (
   intent TEXT, dept TEXT, urgency TEXT, confidence REAL,
   status TEXT NOT NULL DEFAULT 'review' CHECK (status IN ('review', 'routed', 'replied')),
   reply TEXT,
+  external_id TEXT,  -- e.g. the voice platform's call id, so a retried webhook logs the call once
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_messages_external ON buyer_messages (external_id);
 
 -- Every Jev decision. Open rows are the human review queue; auto-applied rows can still be corrected,
 -- and the corrections measure how often Jev is right at each confidence level.

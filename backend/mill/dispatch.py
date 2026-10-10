@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from mill.auth import role, user
 from mill.db import get_db, insert, one, rows, tx
+from mill.production import roll_code
 
 router = APIRouter()
 
@@ -39,7 +40,7 @@ def scan_roll(did: int, body: ScanIn, db=Depends(get_db), _=role("admin", "store
         d = one(db, "SELECT * FROM dispatches WHERE id = ?", did)
         if d["status"] != "open":
             raise HTTPException(409, "dispatch is closed")
-        r = db.execute("SELECT * FROM rolls WHERE qr = ?", (body.qr,)).fetchone()
+        r = db.execute("SELECT * FROM rolls WHERE qr = ?", (roll_code(body.qr),)).fetchone()
         if not r:
             raise HTTPException(404, "unknown roll")
         if on := db.execute("SELECT dispatch_id FROM dispatch_items WHERE roll_id = ?", (r["id"],)).fetchone():

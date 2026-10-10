@@ -59,10 +59,10 @@ The API docs are at `http://localhost:8000/docs`. On a fresh database, call `POS
 | Feature | | Notes |
 |---|---|---|
 | GRN entry | ✅ | supplier, yarn type, qty, rate, optional order and challan number |
-| Live yarn stock | ✅ | Calculated live from GRNs minus issues, never stored, so it can't drift |
+| Live yarn stock | ✅ | Calculated live from GRNs minus issues, never stored, so it can't drift. Indexed: 60 yarns over 500k GRNs + 2M issues read in ~80 ms (4 s without the indexes) |
 | Reorder level + low-stock alert | ✅ | Every GRN and issue response includes the current low-stock list, and `/alerts/low-stock` returns it on its own |
-| Material issue | ✅ | Locked check: you can't issue more yarn than is in stock (`409`) |
-| Order feasibility | ⚠️ | Returns "can start" or "short by X kg" for each yarn type. It checks one order at a time, so two orders can both count on the same stock. |
+| Material issue | ✅ | Locked check: you can't issue more yarn than is in stock (`409`). A two-thread test proves two simultaneous issues of the last yarn can't both succeed |
+| Order feasibility | ✅ | "Can start" or "short by X kg" per yarn type. Yarn still needed by earlier open orders is held back first (first come, first served by order number) |
 
 ### 3.2 Orders
 | Feature | | Notes |
@@ -116,7 +116,7 @@ The API docs are at `http://localhost:8000/docs`. On a fresh database, call `POS
 ### 3.8 Accounts & owner dashboard
 | Feature | | Notes |
 |---|---|---|
-| Cost per order | ⚠️ | Yarn × average GRN rate, plus wages (piece workers by output; daily workers by their share of hours that day), plus machine-hours × overhead. Yarn is priced at the **average** rate, not first-in-first-out. |
+| Cost per order | ⚠️ | Yarn at the moving-average rate saved on each issue, plus wages (piece workers by output; daily workers by their share of hours that day), plus machine-hours × overhead. Closed months never change. Not first-in-first-out (lot tracking is out of scope) |
 | Output per machine | ✅ | Output, hours and breakdowns for the month |
 | Total wages | ✅ | |
 | Supplier bills + payments | ✅ | GRNs are the bills; payables report |
@@ -130,7 +130,7 @@ The API docs are at `http://localhost:8000/docs`. On a fresh database, call `POS
 | Breakdown triage | ✅ | Jev picks the category and severity; who to send follows from the category by rule |
 | QC defect classification | ✅ | Defect type, stage at fault, severity |
 | Order risk flag | ✅ | Jev yes/no question |
-| Confidence gate + human review queue | ✅ | `/reviews` lists items; a person accepts or corrects them, and only the allowed values are accepted |
+| Confidence gate + human review queue | ✅ | Every AI decision is logged. Unsure ones wait in `/reviews`; auto-applied ones can still be corrected. `/reviews/accuracy` shows how often Jev was right per confidence band, which is how to set the threshold |
 | Buyer reply draft (English / Tamil / Hindi) | ✅ | Verified live in Tamil; it uses only the live order data |
 | Challan photo → GRN | ⚠️ | Built, but **not yet tested with a real photo**. The store keeper confirms the suggestion before the GRN is saved. |
 | Never AI for numbers | ✅ | Stock, guards, invoices, wages, costs and P&L are all plain code |
@@ -198,8 +198,8 @@ These are marked with `ponytail:` comments in the code. Each one is fine for the
 
 | Shortcut | Where | Upgrade when |
 |---|---|---|
-| Yarn priced at the average GRN rate | `schema.sql` (yarn stock view) | Yarn lot tracking comes in scope |
-| Feasibility checks one order at a time | `app.py` feasibility | Several orders compete for the same yarn |
+| Yarn costed at the moving average, not first-in-first-out | `schema.sql` (yarn stock view) | Yarn lot tracking comes in scope: add an issue → GRN allocation table |
+| Feasibility priority is by order number | `app.py` feasibility | The office needs to put a later order ahead: add a priority column |
 | ETA from the last 7 days of output | `app.py` expected-ready date | Per-stage scheduling is needed |
 | Daily wage per day present | `app.py` wages | Overtime or advances come in scope |
 | Money stored as rounded decimal numbers | throughout | Audited accounting is needed |

@@ -148,7 +148,10 @@ Unknown fields return `422`. Duplicates and bad foreign keys return `409`.
 {
   "can_start": false, "short_kg": 120, "verdict": "short by 120 kg",  // or "can start"
   "lines": [{ "yarn_type_id", "count", "material", "colour",
-              "required_kg", "issued_kg", "available_kg", "short_kg" }]
+              "required_kg", "issued_kg", "available_kg",
+              "reserved_kg",   // still needed by earlier open orders (first come, first served by order number)
+              "free_kg",       // available_kg - reserved_kg: what this order can actually count on
+              "short_kg" }]
 }
 ```
 
@@ -165,9 +168,9 @@ Unknown fields return `422`. Duplicates and bad foreign keys return `409`.
 | POST | `/grn` | `{supplier_id, yarn_type_id, qty_kg, rate, order_id?, challan_no?}` | `{grn, stock, low_stock: [...]}`. Show an alert if `low_stock` is non-empty. |
 | GET | `/grn` | none | GRN list with the `supplier` name |
 | POST | `/grn/challan` | `{image_b64, mime: "image/jpeg"}` | `{extracted: {...}, suggested: {supplier_id, yarn_type_id, qty_kg, rate, challan_no}}`. Pre-fill the GRN form from `suggested` (ids may be null), let the store keeper confirm, then `POST /grn`. |
-| GET | `/stock` | none | `[{id, count, material, colour, reorder_kg, stock_kg, avg_rate, low: 0/1}]` |
+| GET | `/stock` | none | `[{id, count, material, colour, reorder_kg, stock_kg, avg_rate, low: 0/1, ...}]`. `avg_rate` is the moving average cost of the yarn on hand (`null` when none is on hand). |
 | GET | `/alerts/low-stock` | none | Yarn types at or below their reorder level |
-| POST | `/issues` | `{order_id, yarn_type_id, qty_kg, machine_id?}` | `{issue, low_stock}`. Returns `409 "only X kg in stock"` if there isn't enough. |
+| POST | `/issues` | `{order_id, yarn_type_id, qty_kg, machine_id?}` | `{issue, low_stock}`. The issue stores the yarn's `rate` at that moment, so later deliveries never change its cost. Returns `409 "only X kg in stock"` if there isn't enough; two people issuing the last yarn at once can't both succeed. |
 | GET | `/issues` | `?order_id=` | Issue list |
 
 ## Production floor
@@ -268,13 +271,15 @@ Format the invoice number on the frontend, for example `INV-` followed by the ze
 | GET | `/messages` | `?status=&dept=` | The inbox. Filter by `dept` for each department's view. |
 | POST | `/messages/{id}/draft` | `{lang}` | `{draft}`, a reply drafted from live order data. Also saved on the message. |
 | POST | `/messages/{id}/reply` | `{text}` | Marks the message `replied` with the final text. **It does not send anything**; actual WhatsApp or email delivery isn't built. |
-| GET | `/reviews` | none | The human review queue (below) |
-| POST | `/reviews/{id}` | none, or `{field: value, ...}` | **No body accepts the AI's suggestion**; fields you send correct it. Values must come from the enums. Returns `{ok, applied}`. A resolved message becomes `routed`. Returns `409` if the review is already resolved. |
+| GET | `/reviews` | `?status=open\|resolved\|all&kind=` | Every AI decision. `open` (the default) is the human review queue; `resolved` includes decisions applied automatically, which can still be corrected |
+| GET | `/reviews/accuracy` | none | Admin/owner. For each kind: decisions, how many were auto-applied, how many a person checked, and how often Jev's main decision matched the person's, per confidence band. Use it to set `AI_THRESHOLD` |
+| POST | `/reviews/{id}` | none, or `{field: value, ...}` | Open item: **no body accepts the AI's suggestion**; fields you send correct it. Settled item (auto-applied or already decided): send fields to correct it; an empty body returns `409`. Values must come from the enums. Returns `{ok, applied}`. A resolved message becomes `routed` (a replied one stays `replied`). |
 
 **AI responses** (`routing`, `triage` and `classification` all have this shape):
 ```jsonc
 {
   "auto": true,               // false means it was sent to the review queue
+  "review_id": 12,            // every decision is logged; POST /reviews/12 corrects it
   "confidence": 0.94,         // show this, for example "Production (0.94)"
   "suggestion": { "intent": "status", "dept": "Production", "urgency": "med" },
   "probs": { "intent": { "status": 0.94, ... }, ... }
@@ -287,7 +292,9 @@ When `auto` is `false`, the fields on the message, log or QC record stay **empty
 **Review queue item:**
 ```jsonc
 { "id", "kind": "message" | "breakdown" | "defect", "ref_id", // id of the message / machine log / QC record
-  "suggestion": { ... }, "confidence": 0.41, "status": "open", "created_at" }
+  "suggestion": { ... },      // what Jev chose
+  "final": { ... } | null,    // what a person confirmed or corrected; null = nobody has checked it
+  "auto": false, "confidence": 0.41, "status": "open" | "resolved", "created_at" }
 ```
 
 ## Typical screen → endpoint map

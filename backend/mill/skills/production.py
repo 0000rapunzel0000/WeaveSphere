@@ -20,7 +20,7 @@ skill("make_roll", "Create a finished roll of fabric off a machine; it gets a QR
       lambda v: ("POST", "/rolls", {"order_id": v["order"], "machine_id": v["machine"], "shift_id": v["shift"],
                                     "operator_id": v["operator"], "metres": v["metres"]}),
       lambda v, n: f"make a {g(v['metres'])} m roll for order #{v['order']} from {n['machine']}, {n['shift']} shift, {n['operator']}",
-      lambda r, v, n: f"Roll {r['qr']} is waiting for QC.")
+      lambda r, v, n: f"Roll {r['qr']} is waiting for QC.", gives=("roll", lambda r: r["qr"]))
 
 
 def _triage(r, v, n):
@@ -32,21 +32,55 @@ def _triage(r, v, n):
             if t["auto"] else "The breakdown is in AI review for the floor team to classify.")
 
 
-skill("machine_status", "CHANGE a machine's status: the person reports it started running, stopped, broke down (and what happened) or "
-      "went for maintenance. A statement, not a question.", FLOOR,
+skill("machine_status", "CHANGE a machine's STATUS: set it to running / idle / breakdown / maintenance, or report it started, stopped, "
+      "broke down (and what happened) or went for maintenance. Any 'set … status to …' is this. A statement, not a question.", FLOOR,
       [F("machine", "machine", "machine"), F("status", "choice", "status", options=("Running", "Idle", "Breakdown", "Maintenance")),
        F("note", "text", "what happened", required=False)],
       lambda v: ("POST", f"/machines/{v['machine']}/status", {"status": v["status"], "note": v.get("note") or None}),
       lambda v, n: f"set {n['machine']} to {v['status']}" + opt(v.get("note"), " ({})"), _triage,
       rules=[lambda v: "What happened to the machine?" if v.get("status") == "Breakdown" and not v.get("note") else None])
 
-skill("assign_job", "START an order on a machine (open a job card): which order a machine should run next, and who runs it. No amount produced "
-      "is mentioned.", FLOOR,
+skill("assign_job", "PUT a new order on a machine (open a job card): which order a machine should run next, and who runs it. No "
+      "amount produced and no status change (starting/stopping the machine) is mentioned.", FLOOR,
       [F("order", "order", "order"), F("machine", "machine", "machine"), F("operator", "worker", "operator"),
        F("shift", "shift", "shift")],
       lambda v: ("POST", "/jobs", {"order_id": v["order"], "machine_id": v["machine"], "operator_id": v["operator"],
                                    "shift_id": v["shift"]}),
       lambda v, n: f"put order #{v['order']} on {n['machine']} with {n['operator']}, {n['shift']} shift")
+
+def _current_job(db, v, n):
+    j = db.execute("SELECT j.order_id, j.shift_id, w.name, s.name FROM job_cards j LEFT JOIN workers w ON w.id = j.operator_id "
+                   "LEFT JOIN shifts s ON s.id = j.shift_id WHERE j.machine_id = ? AND j.status = 'open'", (v["machine"],)).fetchone()
+    if not j:
+        return f"{n['machine']} has no job right now. Which order should it run? (Put the order on the machine instead.)"
+    v["_order"], n["_was"] = j[0], j[2] or "nobody"
+    if not v.get("shift"):
+        if not j[1]:
+            return "Which shift?"
+        v["shift"], n["shift"] = j[1], j[3]
+
+
+skill("change_operator", "SWAP the operator on a machine's current job: put a different worker on it ('Arun instead of "
+      "Lakshmi on loom 2'). The machine keeps its order.", FLOOR,
+      [F("machine", "machine", "machine"), F("operator", "worker", "new operator"), F("shift", "shift", "shift", required=False)],
+      lambda v: ("POST", "/jobs", {"order_id": v["_order"], "machine_id": v["machine"], "operator_id": v["operator"], "shift_id": v["shift"]}),
+      lambda v, n: f"put {n['operator']} on {n['machine']} (order #{v.get('_order', '?')}, {n.get('shift', '?')} shift) instead of {n.get('_was', 'the current operator')}",
+      prepare=_current_job)
+
+
+def _other_jobs(db, v, n):
+    jobs = db.execute("SELECT j.id, m.name, j.order_id, m.status FROM job_cards j JOIN machines m ON m.id = j.machine_id "
+                      "WHERE j.status = 'open' AND j.operator_id = ?", (v["worker"],)).fetchall()  # fixed now: a later step's job is kept
+    v["_jobs"] = [j[0] for j in jobs]
+    n["_jobs"] = "; ".join(f"{j[1]} (order #{j[2]}{', it stops until someone else is put on it' if j[3] == 'Running' else ''})" for j in jobs)
+
+
+skill("release_worker", "FREE a worker from the jobs they are on now (take them off their machines), e.g. to move them to "
+      "another machine. Those machines stop until someone else is put on them.", FLOOR,
+      [F("worker", "worker", "worker")],
+      lambda v: ("POST", f"/workers/{v['worker']}/release", {"job_ids": v["_jobs"]}),
+      lambda v, n: (f"take {n['worker']} off {n['_jobs']}" if n.get("_jobs") else f"leave {n['worker']} as is: no other jobs to free them from"),
+      lambda r, v, n: "", prepare=_other_jobs)
 
 skill("finish_job", "Mark the job on a machine as done (close its job card).", FLOOR,
       [F("job", "job", "machine whose job is done")],

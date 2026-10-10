@@ -73,7 +73,7 @@ skill("raise_po", "Raise a purchase order by hand to a supplier for a yarn.", {"
       [F("supplier", "supplier", "supplier"), F("yarn", "yarn", "yarn"), F("kg", "number", "kg"), F("rate", "number", "rate per kg (₹)")],
       lambda v: ("POST", "/purchase-orders", {"supplier_id": v["supplier"], "lines": [{"yarn_type_id": v["yarn"], "qty_kg": v["kg"], "rate": v["rate"]}]}),
       lambda v, n: f"raise a PO to {n['supplier']} for {g(v['kg'])} kg of {n['yarn']} at ₹{g(v['rate'])}/kg",
-      lambda r, v, n: f"It is PO-{r['po']['id']}, a draft until approved.")
+      lambda r, v, n: f"It is PO-{r['po']['id']}, a draft until approved.", gives=("po", lambda r: r["po"]["id"]))
 
 skill("recompute_po_drafts", "Recompute the system's purchase-order drafts from today's yarn shortfalls.", STORE, [],
       lambda v: ("POST", "/purchase-orders/refresh", None), lambda v, n: "recompute the PO drafts",

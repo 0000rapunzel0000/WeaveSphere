@@ -194,9 +194,14 @@ everyone can read. Machine status can only change through the status control, so
 ### 3.16 Chat assistant (web and WhatsApp)
 - Staff type what happened in plain words ("Loom 04 did 130 m on night shift for order 1, Arun, 8 hours") or ask
   ("how much polyester is left?"); the assistant asks for anything missing and saves one checked request.
-- **64 skills** cover every area of the app (`backend/mill/skills/`, one module per area). **Jev picks the skill**; the
+- **66 skills** cover every area of the app (`backend/mill/skills/`, one module per area). **Jev picks the skill**; the
   chat model fills its fields; code matches every name to a record and drops any value the person never wrote;
   **Jev checks** the finished request against the conversation — confident → saved, otherwise the person replies YES.
+- **Chains:** one message may ask for several things ("set #5 to running, put Arun on it instead of Lakshmi, free Arun
+  from his other jobs"); it is split into steps, each checked, and run in order. A later step can use what an earlier one
+  made (open a truck, load rolls onto it, close it). Code also checks no quantity the person wrote was left out.
+- **Model by difficulty:** Jev rates each message easy / medium / hard; a light model reads plain one-liners, a stronger
+  one tangled or multi-step messages.
 - It runs through the normal API as the person chatting, so roles and every rule apply. Each conversation is one
   request and ends on done / cancel / "thanks" / 30 quiet minutes / a clearly new request, so old messages never leak in.
 - **Assistant** page for every staff role; owner and office see a log of everything it did (web and WhatsApp).
@@ -223,8 +228,10 @@ everyone can read. Machine status can only change through the status control, so
 | Reply drafts (EN/TA/HI) | Chat model (`google/gemini-2.5-flash`) | "Drafter unavailable" message |
 | Challan photo reading | Chat model (vision) | Type the GRN by hand |
 | Digest wording | Chat model | Plain template |
-| Assistant: which skill | Jev (64 options) | The chat model picks, and every request needs a YES |
-| Assistant: fill the fields | Chat model | "AI unavailable, use the app" |
+| Assistant: which skill, how hard, one or several | Jev (66 options, one call) | The chat model picks; every request needs a YES |
+| Assistant: is a message part of the request under way? | Jev | The request carries on |
+| Assistant: split a message into steps | Chat model (hard tier) | — |
+| Assistant: fill the fields | Chat model (picked by difficulty) | "AI unavailable, use the app" |
 | Assistant: does the request match the chat | Jev | The person confirms with YES |
 
 All through OpenRouter with one key. AI never does arithmetic: stock, costs, invoices, PO quantities and alerts are code.

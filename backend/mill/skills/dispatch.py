@@ -7,7 +7,7 @@ skill("open_truck", "Open a truck (dispatch) for an order, with the vehicle numb
       [F("order", "order", "order"), F("vehicle", "text", "vehicle number"), F("driver", "text", "driver")],
       lambda v: ("POST", "/dispatches", {"order_id": v["order"], "vehicle_no": v["vehicle"], "driver": v["driver"]}),
       lambda v, n: f"open a truck for order #{v['order']}: {v['vehicle']}, driver {v['driver']}",
-      lambda r, v, n: f"It is truck #{r['id']}. Load passed rolls onto it.")
+      lambda r, v, n: f"It is truck #{r['id']}. Load passed rolls onto it.", gives=("truck", lambda r: r["id"]))
 
 skill("load_roll", "Load (scan) a QC-passed roll onto an open truck.", STORE,
       [F("truck", "truck", "truck"), F("roll", "roll", "roll code (ETM-…)")],
@@ -18,7 +18,8 @@ skill("load_roll", "Load (scan) a QC-passed roll onto an open truck.", STORE,
 skill("close_truck", "Close a loaded truck: its rolls are dispatched and the GST invoice is raised.", STORE,
       [F("truck", "truck", "truck")], lambda v: ("POST", f"/dispatches/{v['truck']}/close", None),
       lambda v, n: f"close {n['truck']} and raise the invoice",
-      lambda r, v, n: f"Invoice INV-{r['invoice']['id']:05d}: {g(r['invoice']['metres'])} m, {money(r['invoice']['total'])} with GST.")
+      lambda r, v, n: f"Invoice INV-{r['invoice']['id']:05d}: {g(r['invoice']['metres'])} m, {money(r['invoice']['total'])} with GST.",
+      gives=("invoice", lambda r: r["invoice"]["id"]))
 
 skill("trucks", "List trucks: the open ones being loaded and recent dispatches.", STAFF, [],
       lambda v: ("GET", "/dispatches", None), lambda v, n: "look up trucks",

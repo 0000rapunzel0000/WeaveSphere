@@ -147,5 +147,20 @@ Bugs found while building it, fixed and tested: near-spelling matching could tur
 must be identical); a bare "loom" picked one loom (now asks which); names in Tamil script were stripped before the
 check; the chat model added a date nobody said (now dropped by code, and Jev scored it 0.21).
 
+## Chains and model tiers (run 2026-10-11)
+
+| Check | Result |
+|---|---|
+| Unit tests (AI stubbed) | 39 / 39 — chains, a step using an earlier step's result, per-step questions, stop at first refusal, dropped-quantity guard, same/new request switch, tier → model |
+| Jev routing, one message per skill (live) | 66 / 66 |
+| Jev "same request or new?" (live, 11 hand-made cases incl. Tanglish) | 11 / 11 |
+| Live chains on demo data | the original WhatsApp message → correct 3-step plan (shown for YES); truck open + 2 loads + close; new order + issue to it; output + roll + attendance; Tanglish output + breakdown — all correct, ~6 s each |
+
+Found and fixed: the pro model took 28 s to split one message (now 3.7-flash, low thinking: ~2.5 s); a wrongly routed
+step slipped past Jev's plan check (now code also checks every quantity is used); "start both looms" read as "start an
+order"; a new message stuck to a plan still waiting for YES (now Jev judges same/new from three focused fields); a job with
+its operator removed would have been credited to the last person who ran the machine (now it can't run until reassigned);
+parallel steps shared one database connection.
+
 Not a bug, noted: the Reviews page lists auto-applied decisions as well as waiting ones (they can still be corrected),
 so it shows more rows than the "AI reviews" count on the dashboard, which counts only the waiting ones.

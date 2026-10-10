@@ -27,6 +27,19 @@ class Skill:
     read: bool = False     # only looks something up: runs straight away, no confirmation
     prepare: object = None # db, values, names -> a problem to ask about, or None (for values worked out from others)
     rules: list = field(default_factory=list)  # [values -> a question, or None]
+    gives: tuple = None    # (kind, response -> value): what this makes that a later step in the same message can use
+
+
+class Ref:
+    """A value a later step takes from an earlier step's result ("load it onto the truck from step 1").
+    Filled in when the plan runs; until then it prints as a plain description in summaries."""
+    def __init__(self, step, kind):
+        self.step, self.kind = step, kind
+
+    def __format__(self, spec):
+        return f"(the new {self.kind} from step {self.step})"
+
+    __str__ = __repr__ = lambda self: format(self, "")
 
 
 SKILLS: dict[str, Skill] = {}
@@ -50,7 +63,7 @@ def money(x):
 
 
 def opt(v, fmt):
-    return fmt.format(v) if v not in (None, "", []) else ""
+    return "" if v is None or (isinstance(v, (str, list)) and not v) else fmt.format(v)  # a Ref (later step) prints too
 
 
 def low_line(r):

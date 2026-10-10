@@ -16,7 +16,7 @@ skill("create_order", "Book a new buyer order: buyer, fabric, colour, metres, de
       lambda v: ("POST", "/orders", {"buyer_id": v["buyer"], "fabric_type_id": v["fabric"], "colour": v["colour"], "qty_m": v["metres"],
                                      "deadline": v["deadline"], "price_per_m": v["price"]}),
       lambda v, n: f"book {g(v['metres'])} m of {n['fabric']} in {v['colour']} for {n['buyer']} at ₹{g(v['price'])}/m, due {v['deadline']}",
-      lambda r, v, n: f"It is order #{r['id']}; yarn check: {r['feasibility']['verdict']}.")
+      lambda r, v, n: f"It is order #{r['id']}; yarn check: {r['feasibility']['verdict']}.", gives=("order", lambda r: r["id"]))
 
 skill("order_status", "Say where an order is: stage, metres made, passed and shipped, expected ready date, deadline.", STAFF,
       [F("order", "order", "order")], lambda v: ("GET", f"/orders/{v['order']}", None), lambda v, n: f"look up order #{v['order']}",

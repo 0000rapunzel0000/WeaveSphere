@@ -222,11 +222,11 @@ async function assistantPage(){
  const [threads,log]=await Promise.all([api('/assistant/chat'),office?api('/assistant/conversations'):null]);
  const open=s=>['collecting','confirming'].includes(s);
  const bubbles=threads.map(c=>c.messages.map(m=>`<div class="chat-msg ${m.from==='user'?'user':'bot'}">${esc(m.text)}</div>`).join('')+(open(c.status)?'':`<div class="chat-end">${esc(label(c.skill||'chat'))} · ${esc(c.status)}</div>`)).join('');
- const rows=(log||[]).map(c=>`<tr><td>${esc(stamp(c.updated_at))}<span class="sub">${esc(c.channel)}${c.peer?' · +'+esc(c.peer):''}</span></td><td>${esc(c.username)}</td><td>${esc(label(c.skill||'—'))}</td><td>${esc(c.draft?.summary||c.messages[0]?.text||'')}</td><td>${c.jev==null?'—':pct(c.jev)}</td><td>${badge(c.status)}</td></tr>`);
+ const rows=(log||[]).map(c=>`<tr><td>${esc(stamp(c.updated_at))}<span class="sub">${esc(c.channel)}${c.peer?' · +'+esc(c.peer):''}</span></td><td>${esc(c.username)}</td><td>${esc(label(c.skill||'—'))}<span class="sub">${esc(c.difficulty||'')}${c.model?' · '+esc(c.model.split('/').pop()):''}</span></td><td style="white-space:pre-line">${esc(c.draft?.summary||c.messages[0]?.text||'')}</td><td>${c.jev==null?'—':pct(c.jev)}</td><td>${badge(c.status)}</td></tr>`);
  afterRender=()=>{const t=$('#chatThread');if(t)t.scrollTop=t.scrollHeight;$('#chatInput')?.focus()};
  return head('Assistant','PLAIN WORDS → CHECKED REQUEST')+
   panel('Chat',`<div class="chat" id="chatThread">${bubbles||'<div class="empty">Try: “Loom 04 did 120 m on night shift for order 1, Arun, 8 hours” or “how much polyester is left?”</div>'}</div><form data-form="assistant" class="chat-form"><input id="chatInput" name="text" autocomplete="off" maxlength="2000" placeholder="Tell me what happened, or ask…" required aria-label="Message"><button class="primary">SEND</button></form><p class="help">Say <b>cancel</b> to drop a request, <b>yes</b> to confirm one. Every request runs with your own permissions.</p>`,'JEV PICKS THE SKILL · JEV CHECKS THE REQUEST')+
-  (log?panel('What the assistant did',table(['WHEN','WHO','SKILL','REQUEST','JEV MATCH','RESULT'],rows,'Nothing yet.'),'WEB + WHATSAPP'):'');
+  (log?panel('What the assistant did',table(['WHEN','WHO','SKILL · LEVEL · MODEL','REQUEST','JEV MATCH','RESULT'],rows,'Nothing yet.'),'WEB + WHATSAPP'):'');
 }
 
 async function inboxPage(){

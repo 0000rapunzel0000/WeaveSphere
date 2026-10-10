@@ -4,9 +4,13 @@ from mill.skills import F, g, opt, skill
 OFFICE = {"admin"}
 
 
+KIND = {"buyers": "buyer", "suppliers": "supplier", "workers": "worker", "machines": "machine", "yarn_types": "yarn",
+        "fabric_types": "fabric", "shifts": "shift"}
+
+
 def add(name, table, what, fields, body, summary, desc=None):
     skill(name, desc or f"Add a new {what} to the mill's setup data.", OFFICE, fields, lambda v: ("POST", f"/master/{table}", body(v)), summary,
-          lambda r, v, n: f"Saved as #{r['id']}.")
+          lambda r, v, n: f"Saved as #{r['id']}.", gives=(KIND[table], lambda r: r["id"]) if table in KIND else None)
 
 
 def clean(d):

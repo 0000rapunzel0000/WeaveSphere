@@ -50,19 +50,21 @@ def probability(state, instructions: str, true: str, false: str) -> float | None
         return None
 
 
-def _chat(content, schema=None, model=None):
+def _chat(content, schema=None, model=None, reasoning=None):
     body = {"model": model or CHAT_MODEL, "messages": [{"role": "user", "content": content}]}
+    if reasoning:  # how long a thinking model may think: "low" keeps it to seconds
+        body["reasoning"] = {"effort": reasoning}
     if schema:
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
-    text = _post("/v1/chat/completions", body, timeout=30)["choices"][0]["message"]["content"].strip()
+    text = _post("/v1/chat/completions", body, timeout=60)["choices"][0]["message"]["content"].strip()
     if schema and text.startswith("```"):  # some models wrap JSON in a Markdown fence despite response_format
         text = text.split("\n", 1)[1].rsplit("```", 1)[0]
     return json.loads(text) if schema else text
 
 
-def chat_json(prompt: str, schema: dict, model: str | None = None) -> dict:
+def chat_json(prompt: str, schema: dict, model: str | None = None, reasoning: str | None = None) -> dict:
     """The chat model's answer as JSON matching `schema` (used by the assistant to read a conversation)."""
-    return _chat(prompt, schema, model)
+    return _chat(prompt, schema, model, reasoning)
 
 
 LANGS = {"en": "English", "ta": "Tamil", "hi": "Hindi"}

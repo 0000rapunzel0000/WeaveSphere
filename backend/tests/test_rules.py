@@ -444,7 +444,7 @@ MATRIX = [
     ("GET", "/purchase-orders", ALL), ("GET", "/purchase-orders/99999", ALL), ("POST", "/purchase-orders", {OFFICE}), ("POST", "/purchase-orders/refresh", {OFFICE, STORE}),
     ("PUT", "/po-lines/99999", {OFFICE}), ("POST", "/purchase-orders/99999/approve", {OFFICE}),
     ("POST", "/purchase-orders/99999/cancel", {OFFICE}),
-    ("POST", "/jobs", {OFFICE, FLOOR}), ("POST", "/jobs/99999/done", {OFFICE, FLOOR}),
+    ("POST", "/jobs", {OFFICE, FLOOR}), ("POST", "/workers/99999/release", {OFFICE, FLOOR}), ("POST", "/jobs/99999/done", {OFFICE, FLOOR}),
     ("POST", "/machines/99999/status", {OFFICE, FLOOR}), ("GET", "/machines/99999/log", ALL),
     ("GET", "/production", ALL), ("POST", "/production", {OFFICE, FLOOR}), ("GET", "/floor", ALL),
     ("GET", "/rolls", ALL), ("POST", "/rolls", {OFFICE, FLOOR}), ("GET", "/rolls/ETM-X", ALL),

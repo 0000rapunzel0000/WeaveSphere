@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 import ai
 
-DB_PATH = os.environ.get("DB_PATH", "mill.db")
+DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "mill.db"))
 app = FastAPI(title="Everest Textile Mills")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(","),
                    allow_methods=["*"], allow_headers=["*"])
@@ -31,9 +31,22 @@ def connect():
     return db
 
 
+def migrate(db):
+    """Columns added after a database was first created; CREATE TABLE IF NOT EXISTS can't add them."""
+    for table, col, ddl in [("material_issues", "rate", "REAL"), ("ai_reviews", "auto", "INTEGER NOT NULL DEFAULT 0"),
+                            ("ai_reviews", "final", "TEXT")]:
+        have = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+        if have and col not in have:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+
+
 _db = connect()
 _db.execute("PRAGMA journal_mode = WAL")
+migrate(_db)
 _db.executescript(open(os.path.join(os.path.dirname(__file__), "db", "schema.sql")).read())
+# Issues made before rates were stored get the all-time average they used to be costed at.
+_db.execute("""UPDATE material_issues SET rate = (SELECT SUM(g.qty_kg * g.rate) / SUM(g.qty_kg) FROM grn g
+               WHERE g.yarn_type_id = material_issues.yarn_type_id) WHERE rate IS NULL""")
 _db.close()
 
 
@@ -250,15 +263,22 @@ def order_status(db, o, t):
 
 
 def feasibility(db, o):
+    """Yarn this order still needs vs stock that earlier open orders haven't already claimed."""
+    # ponytail: first come, first served by order id; add a priority column if the office needs to reorder.
     lines = rows(db.execute("""
         SELECT y.id yarn_type_id, y.count, y.material, y.colour, b.kg_per_m * :qty required_kg,
           COALESCE((SELECT SUM(qty_kg) FROM material_issues WHERE order_id = :oid AND yarn_type_id = y.id), 0) issued_kg,
-          y.stock_kg available_kg
+          y.stock_kg available_kg,
+          COALESCE((SELECT SUM(MAX(0, o2.qty_m * b2.kg_per_m - COALESCE((SELECT SUM(i.qty_kg) FROM material_issues i
+                                                                       WHERE i.order_id = o2.id AND i.yarn_type_id = y.id), 0)))
+            FROM orders o2 JOIN bom b2 ON b2.fabric_type_id = o2.fabric_type_id AND b2.yarn_type_id = y.id
+            WHERE o2.id < :oid
+              AND NOT EXISTS (SELECT 1 FROM dispatches d WHERE d.order_id = o2.id AND d.status = 'closed')), 0) reserved_kg
         FROM bom b JOIN yarn_stock y ON y.id = b.yarn_type_id WHERE b.fabric_type_id = :fid""",
                             {"qty": o["qty_m"], "oid": o["id"], "fid": o["fabric_type_id"]}))
-    # ponytail: checks this order alone against free stock; doesn't reserve yarn for other open orders.
     for line in lines:
-        line["short_kg"] = round(max(0, line["required_kg"] - line["issued_kg"] - line["available_kg"]), 2)
+        line["free_kg"] = round(max(0, line["available_kg"] - line["reserved_kg"]), 2)
+        line["short_kg"] = round(max(0, line["required_kg"] - line["issued_kg"] - line["free_kg"]), 2)
     short = round(sum(line["short_kg"] for line in lines), 2)
     if not lines:
         verdict = "no BOM for this fabric type"
@@ -424,10 +444,10 @@ def low_stock(db=Depends(get_db), _=Depends(user)):
 @app.post("/issues")
 def issue_yarn(body: IssueIn, db=Depends(get_db), u=role("admin", "store")):
     with tx(db):
-        have = one(db, "SELECT stock_kg FROM yarn_stock WHERE id = ?", body.yarn_type_id)["stock_kg"]
-        if body.qty_kg > have:
-            raise HTTPException(409, f"only {have:g} kg in stock")
-        iid = insert(db, "material_issues", {**body.model_dump(), "created_by": u["id"]})
+        s = one(db, "SELECT stock_kg, avg_rate FROM yarn_stock WHERE id = ?", body.yarn_type_id)
+        if body.qty_kg > s["stock_kg"]:
+            raise HTTPException(409, f"only {s['stock_kg']:g} kg in stock")
+        iid = insert(db, "material_issues", {**body.model_dump(), "rate": s["avg_rate"], "created_by": u["id"]})
     return {"issue": one(db, "SELECT * FROM material_issues WHERE id = ?", iid),
             "low_stock": rows(db.execute(LOW_STOCK))}
 
@@ -494,7 +514,8 @@ def apply_decision(db, kind, ref_id, fields):
     table = HEADS[kind][0]
     if kind == "breakdown" and "category" in fields:
         fields = {**fields, "assignee": ASSIGNEE_FOR[fields["category"]]}
-    sets = [f"{k} = ?" for k in fields] + (["status = 'routed'"] if kind == "message" else [])
+    sets = [f"{k} = ?" for k in fields] + (["status = CASE status WHEN 'replied' THEN status ELSE 'routed' END"]
+                                           if kind == "message" else [])
     db.execute(f"UPDATE {table} SET {', '.join(sets)} WHERE id = ?", (*fields.values(), ref_id))
 
 
@@ -509,35 +530,69 @@ def decide(db, kind, ref_id, state, skip=()):
     auto = conf >= ai.THRESHOLD and choice.get("intent") != "other"
     if auto:
         apply_decision(db, kind, ref_id, {f: v for f, v in choice.items() if f in res})
-    else:
-        insert(db, "ai_reviews", {"kind": kind, "ref_id": ref_id, "suggestion": json.dumps(choice), "confidence": conf})
-    return {"auto": auto, "confidence": round(conf, 3), "suggestion": choice,
+    rid = insert(db, "ai_reviews", {"kind": kind, "ref_id": ref_id, "suggestion": json.dumps(choice), "confidence": conf,
+                                    "auto": int(auto), "status": "resolved" if auto else "open"})
+    return {"auto": auto, "confidence": round(conf, 3), "suggestion": choice, "review_id": rid,
             "probs": {f: r["probs"] for f, r in res.items()}}
 
 
+def review_row(r):
+    return {**r, "auto": bool(r["auto"]), "suggestion": json.loads(r["suggestion"]),
+            "final": json.loads(r["final"]) if r["final"] else None}
+
+
 @app.get("/reviews")
-def review_queue(db=Depends(get_db), _=role("admin", "supervisor", "qc")):
-    return [{**r, "suggestion": json.loads(r["suggestion"])}
-            for r in rows(db.execute("SELECT * FROM ai_reviews WHERE status = 'open' ORDER BY id"))]
+def review_queue(status: Literal["open", "resolved", "all"] = "open", kind: str | None = None,
+                 db=Depends(get_db), _=role("admin", "supervisor", "qc")):
+    """open = the human queue; resolved = auto-applied or already decided (still correctable)."""
+    return [review_row(r) for r in rows(db.execute(
+        "SELECT * FROM ai_reviews WHERE (? = 'all' OR status = ?) AND (? IS NULL OR kind = ?) ORDER BY id DESC",
+        (status, status, kind, kind)))]
+
+
+@app.get("/reviews/accuracy")
+def review_accuracy(db=Depends(get_db), _=role("admin")):
+    """How often Jev's main decision matched what a person settled on, by confidence band.
+    This is the evidence for AI_THRESHOLD: pick the lowest band whose accuracy you can live with."""
+    bands = [(0.9, 1.01, "0.9-1.0"), (0.8, 0.9, "0.8-0.9"), (0.7, 0.8, "0.7-0.8"), (0.0, 0.7, "below 0.7")]
+    out = {}
+    for r in rows(db.execute("SELECT * FROM ai_reviews WHERE confidence > 0")):  # 0 = AI was down, not a decision
+        k = out.setdefault(r["kind"], {"decisions": 0, "auto_applied": 0, "human_checked": 0,
+                                       "bands": {b: {"checked": 0, "agreed": 0} for _, _, b in bands}})
+        k["decisions"] += 1
+        k["auto_applied"] += r["auto"]
+        if r["final"]:
+            suggestion, final = json.loads(r["suggestion"]), json.loads(r["final"])
+            gate = next(f for f in HEADS[r["kind"]][1] if f in suggestion)  # the field the gate checked
+            band = next(b for lo, hi, b in bands if lo <= r["confidence"] < hi)
+            k["human_checked"] += 1
+            k["bands"][band]["checked"] += 1
+            k["bands"][band]["agreed"] += final.get(gate) == suggestion[gate]
+    for k in out.values():
+        for b in k["bands"].values():
+            b["accuracy"] = round(b["agreed"] / b["checked"], 3) if b["checked"] else None
+    return {"threshold": ai.THRESHOLD, "kinds": out}
 
 
 @app.post("/reviews/{rid}")
 def resolve_review(rid: int, fields: dict[str, str] | None = None, db=Depends(get_db),
                    _=role("admin", "supervisor", "qc")):
-    """Empty body accepts the AI's suggestion; any fields sent correct it."""
+    """Open item: an empty body accepts the AI's suggestion; fields sent correct it.
+    Settled item (auto-applied or already decided): send the fields to correct it."""
     r = one(db, "SELECT * FROM ai_reviews WHERE id = ?", rid)
-    if r["status"] != "open":
-        raise HTTPException(409, "This review is already resolved.")
+    if r["status"] != "open" and not fields:
+        raise HTTPException(409, "This decision is already settled. Send the corrected fields to change it.")
     allowed = HEADS[r["kind"]][1]
     for f, v in (fields or {}).items():
         if f not in allowed:
             raise HTTPException(422, f"Unknown field '{f}'. Allowed: {', '.join(allowed)}.")
         if v not in allowed[f][1]:
             raise HTTPException(422, f"{f} must be one of: {', '.join(allowed[f][1])}.")
-    applied = {f: v for f, v in {**json.loads(r["suggestion"]), **(fields or {})}.items() if f in allowed}
+    current = json.loads(r["final"] or r["suggestion"])
+    applied = {f: v for f, v in {**current, **(fields or {})}.items() if f in allowed}
     with tx(db):
         apply_decision(db, r["kind"], r["ref_id"], applied)
-        db.execute("UPDATE ai_reviews SET status = 'resolved' WHERE id = ?", (rid,))
+        db.execute("UPDATE ai_reviews SET status = 'resolved', final = ? WHERE id = ?", (json.dumps(applied), rid))
     return {"ok": True, "applied": applied}
 
 
@@ -609,6 +664,14 @@ def machine_log(mid: int, db=Depends(get_db), _=Depends(user)):
 def log_production(body: ProductionIn, db=Depends(get_db), _=role("admin", "supervisor")):
     return one(db, "SELECT * FROM production_entries WHERE id = ?",
                insert(db, "production_entries", body.model_dump(mode="json")))
+
+
+@app.get("/production")
+def list_production(entry_date: date | None = None, db=Depends(get_db), _=Depends(user)):
+    d = entry_date and entry_date.isoformat()
+    return rows(db.execute("""SELECT p.*, m.name machine, w.name operator, s.name shift FROM production_entries p
+        JOIN machines m ON m.id = p.machine_id JOIN workers w ON w.id = p.operator_id JOIN shifts s ON s.id = p.shift_id
+        WHERE ? IS NULL OR p.entry_date = ? ORDER BY p.id DESC LIMIT 200""", (d, d)))
 
 
 @app.get("/floor")
@@ -829,8 +892,8 @@ def record_payment(body: PaymentIn, db=Depends(get_db), _=role("admin")):
 
 
 def order_cost(db, oid):
-    yarn = db.execute("SELECT COALESCE(SUM(i.qty_kg * COALESCE(s.avg_rate, 0)), 0) FROM material_issues i "
-                      "JOIN yarn_stock s ON s.id = i.yarn_type_id WHERE i.order_id = ?", (oid,)).fetchone()[0]
+    yarn = db.execute("SELECT COALESCE(SUM(qty_kg * COALESCE(rate, 0)), 0) FROM material_issues WHERE order_id = ?",
+                      (oid,)).fetchone()[0]
     # Piece workers: output x rate. Daily workers: day rate split by their hours on each order that day.
     labour = db.execute("""SELECT COALESCE(SUM(CASE w.wage_type WHEN 'piece' THEN p.output * w.rate
           ELSE w.rate * p.hours / NULLIF((SELECT SUM(q.hours) FROM production_entries q
@@ -889,8 +952,8 @@ def pnl(month: str | None = None, db=Depends(get_db), _=role()):
     m = month_of(month)
     q = lambda sql: db.execute(sql, (m,)).fetchone()[0]  # noqa: E731
     revenue = q("SELECT COALESCE(SUM(subtotal), 0) FROM invoices WHERE strftime('%Y-%m', issued_on) = ?")  # ex-GST
-    yarn = q("SELECT COALESCE(SUM(i.qty_kg * COALESCE(s.avg_rate, 0)), 0) FROM material_issues i "
-             "JOIN yarn_stock s ON s.id = i.yarn_type_id WHERE strftime('%Y-%m', i.issued_on) = ?")
+    yarn = q("SELECT COALESCE(SUM(qty_kg * COALESCE(rate, 0)), 0) FROM material_issues "
+             "WHERE strftime('%Y-%m', issued_on) = ?")
     wage_total = sum(w["wage"] for w in wages(db, m))
     overhead = q("SELECT COALESCE(SUM(p.hours * mc.overhead_per_hour), 0) FROM production_entries p "
                  "JOIN machines mc ON mc.id = p.machine_id WHERE strftime('%Y-%m', p.entry_date) = ?")

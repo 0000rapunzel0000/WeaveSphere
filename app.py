@@ -11,6 +11,7 @@ from datetime import date, timedelta
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,7 @@ import ai
 
 DB_PATH = os.environ.get("DB_PATH", "mill.db")
 app = FastAPI(title="Everest Textile Mills")
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
 
 
 def connect():

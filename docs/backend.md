@@ -349,3 +349,5 @@ See [automation.md](automation.md): `/alerts/defects`, `/reports/defects`, `/pur
 
 Shared rules are imported from the module that owns them (e.g. `from mill.orders import tracking`), never copied.
 
+## Attendance register
+`GET /attendance?month=YYYY-MM` (admin, supervisor; default this month) → `{month, records: [{worker_id, work_date, shift_id, shift}]}`, one record per worker per shift present.

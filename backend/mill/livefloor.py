@@ -52,7 +52,7 @@ def accrue(db):
     by yarn: first the yarn already issued to the order, then store stock (issued automatically, at the moving
     average rate). Out of yarn or stage complete -> the machine stops and the log says why."""
     # ponytail: spinning output is kg of yarn, not metres; it is not run live.
-    now = utcnow()
+    now, drew = utcnow(), False
     for j in rows(db.execute("""SELECT j.*, m.kind, m.rate_m_per_hour rate, o.qty_m FROM job_cards j
             JOIN machines m ON m.id = j.machine_id JOIN orders o ON o.id = j.order_id
             WHERE j.status = 'open' AND j.last_tick IS NOT NULL AND m.status = 'Running'
@@ -73,6 +73,7 @@ def accrue(db):
             for x in lines:
                 draw = min(metres * x["kg_per_m"] - max(0, x["buffer_kg"]), max(0, x["stock_kg"]))
                 if draw > 1e-6:
+                    drew = True
                     insert(db, "material_issues", {"order_id": j["order_id"], "yarn_type_id": x["yarn_type_id"],
                                                    "machine_id": j["machine_id"], "qty_kg": draw, "rate": x["avg_rate"]})
         if metres > 0:
@@ -93,6 +94,7 @@ def accrue(db):
             stop_machine(db, j, why)
         else:
             db.execute("UPDATE job_cards SET last_tick = ? WHERE id = ?", (ts(now), j["id"]))
+    return drew  # True when store yarn was used, so purchase-order drafts need a refresh
 
 
 _last_accrual = 0.0
@@ -108,8 +110,23 @@ def accrue_now():
     try:
         if db.execute("SELECT 1 FROM job_cards WHERE status = 'open' AND last_tick IS NOT NULL LIMIT 1").fetchone():
             with tx(db):
-                accrue(db)
+                drew = accrue(db)
+            if drew:  # the looms took yarn from the store: what still needs buying has changed
+                from mill.purchasing import auto_po
+                auto_po(db)
     except Exception:
         logging.exception("live floor update failed")
+    finally:
+        db.close()
+
+
+def resume_demo_clock():
+    """At demo speed (SIM_SPEED > 1), time while the server was off is not fast-forwarded: running machines carry on
+    from now, so a demo database built earlier is still mid-shift when the demo starts. At real speed nothing changes."""
+    if SIM_SPEED <= 1:
+        return
+    db = connect()
+    try:
+        db.execute("UPDATE job_cards SET last_tick = ? WHERE status = 'open' AND last_tick IS NOT NULL", (ts(utcnow()),))
     finally:
         db.close()

@@ -52,7 +52,7 @@ const rollCode=v=>{v=String(v??'').trim();return v.includes('roll=')?decodeURICo
 const rollUrl=qr=>location.origin+location.pathname+'#roll='+encodeURIComponent(qr);
 const scanButton=(target,id='')=>`<button type="button" class="secondary scan-btn" data-act="scan" data-target="${target}" ${id?`data-id="${id}"`:''} aria-label="Scan a roll QR with the camera">SCAN</button>`;
 
-let dirty=false,orderBuyer={},machineOrder={},role='Owner',page='Dashboard',me=null,lang='en',currentOrder='',currentToken='',traceRoll='',pendingRoll='',editMasterId='',masterKey='buyers',reportMonth=thisMonth(),defectGroup='machine_shift',digestCache=null,poLines={},flash='',afterRender=null,renderSeq=0,toastTimer=null;
+let dirty=false,orderBuyer={},machineOrder={},role='Owner',page='Dashboard',me=null,lang='en',currentOrder='',currentToken='',traceRoll='',pendingRoll='',editMasterId='',masterKey='buyers',reportMonth=thisMonth(),shownFlash='',defectGroup='machine_shift',digestCache=null,poLines={},flash='',afterRender=null,renderSeq=0,toastTimer=null;
 try{lang=localStorage.getItem('everest-lang')||'en'}catch{}
 
 // ---------- Master data (read by every page for names) ----------
@@ -230,12 +230,26 @@ async function reviewsPage(){
  return head('AI review queue','HUMAN IN THE LOOP')+panel('Waiting for a person',table(['ITEM','JEV CONFIDENCE','DECISION (JEV’S SUGGESTION PRESELECTED WHEN IT HAD ONE)','ACTION'],open.map(row),'Nothing to review. Jev was confident about everything.'),'SAVE APPLIES THE VALUES SHOWN')+panel('Recent decisions',table(['ITEM','JEV CONFIDENCE','APPLIED VALUES','ACTION'],settled.slice(0,25).map(row),'No settled decisions yet.'),'WRONG? CHANGE IT AND PRESS CORRECT');
 }
 
+// Attendance register: workers down the side, the month's days across; each mark is a shift present (D, N…).
+function attendanceRegister(reg){
+ if(reg.error)return panel('Attendance register',`<div class="notice">The register could not load (${esc(reg.error)}). If the server was started before the register existed, restart the backend.</div>`);
+ const [y,mo]=reg.month.split('-').map(Number),n=new Date(y,mo,0).getDate(),days=[...Array(n)].map((_,i)=>i+1);
+ const key=d=>`${reg.month}-${String(d).padStart(2,'0')}`,now=today(),dow=d=>new Date(y,mo-1,d).getDay();
+ const tag=name=>esc(String(name).trim().slice(0,1).toUpperCase());  // ponytail: first letter; two shifts sharing a letter look alike (the cell's tooltip names them)
+ const by={};for(const r of reg.records)((by[r.worker_id]??={})[r.work_date]??=[]).push(r.shift);
+ const cls=d=>[dow(d)===0?'sun':'',key(d)===now?'today':''].join(' ');
+ const head=`<tr><th class="who">WORKER</th>${days.map(d=>`<th class="${cls(d)}">${d}<small>${'SMTWTFS'[dow(d)]}</small></th>`).join('')}<th class="tot">DAYS</th></tr>`;
+ const body=M.workers.map(w=>{const mine=by[w.id]||{};return`<tr><th class="who">${esc(w.name)}</th>${days.map(d=>{const s=mine[key(d)];return`<td class="${cls(d)} ${s?'on':''}" ${s?`title="${esc(key(d)+': '+s.join(', '))}"`:''}>${s?s.map(tag).join('·'):''}</td>`}).join('')}<td class="tot">${Object.keys(mine).length}</td></tr>`}).join('');
+ const legend=M.shifts.map(s=>`<b>${tag(s.name)}</b> ${esc(s.name)}`).join(' · ');
+ return panel('Attendance register · '+esc(reg.month),M.workers.length?`<div class="register-wrap"><table class="register"><thead>${head}</thead><tbody>${body}</tbody></table></div><p class="help">${legend} · a mark means present on that shift · DAYS = days present, as wages count them · pick another month at the top</p>`:'<div class="empty">Add workers in Masters.</div>','WHO WAS PRESENT, DAY BY DAY');
+}
 async function workforcePage(){
- const canWages=['Owner','Office / Admin'].includes(role),wages=canWages?await api('/wages?month='+reportMonth):null;
+ const canWages=['Owner','Office / Admin'].includes(role);
+ const [wages,register]=await Promise.all([canWages?api('/wages?month='+reportMonth):null,api('/attendance?month='+reportMonth).catch(e=>({error:e.message}))]);  // the register failing must not take the page down
  const workers=M.workers.map(w=>`<label class="roll-card"><input type="checkbox" name="worker_ids" value="${w.id}"><strong>${esc(w.name)}</strong><small>${esc(w.wage_type)} · ${money(w.rate)}${w.wage_type==='daily'?'/day':'/unit'}</small></label>`).join('')||'<div class="empty">Add workers in Masters.</div>';
  const attendance=`<form class="panel form-section" data-form="attendance"><div class="panel-head"><h2>Record shift attendance</h2><span class="mono">TICK EVERYONE PRESENT</span></div><div class="form-grid">${select('SHIFT','shift_id',choices(M.shifts))+field('DATE','work_date','','date',today())}</div><div class="roll-cards" style="margin-top:12px">${workers}</div><div class="form-actions"><button class="primary">SAVE ATTENDANCE</button></div></form>`;
  const wageRows=wages?wages.workers.map(w=>`<tr><td>${esc(w.name)}</td><td>${esc(w.wage_type)} · ${money(w.rate)}</td><td>${w.days}</td><td>${num(w.output)}</td><td>${money(w.wage)}</td></tr>`):[];
- return head('People, shifts & wages','ATTENDANCE / PAYROLL',canWages?monthForm():'')+'<div class="grid three">'+kpi('WORKERS',M.workers.length,'ON THE ROSTER')+(wages?kpi('WAGES · '+esc(wages.month),money(wages.total),'ATTENDANCE + PIECE OUTPUT'):'')+'</div>'+attendance+(wages?panel('Monthly wages',table(['WORKER','RATE RULE','DAYS PRESENT','OUTPUT','WAGE'],wageRows,'No workers yet.'),'DAILY × DAYS, OR PIECE × OUTPUT'):'');
+ return head('People, shifts & wages','ATTENDANCE / PAYROLL',monthForm())+'<div class="grid three">'+kpi('WORKERS',M.workers.length,'ON THE ROSTER')+(wages?kpi('WAGES · '+esc(wages.month),money(wages.total),'ATTENDANCE + PIECE OUTPUT'):'')+'</div>'+attendance+attendanceRegister(register)+(wages?panel('Monthly wages',table(['WORKER','RATE RULE','DAYS PRESENT','OUTPUT','WAGE'],wageRows,'No workers yet.'),'DAILY × DAYS, OR PIECE × OUTPUT'):'');
 }
 
 async function accountsPage(){
@@ -282,7 +296,8 @@ async function render(quiet){
  try{html=await pages[page]()}catch(e){html=head(page,'COULD NOT LOAD')+`<div class="alert">${esc(e.message)}</div>`}
  if(seq!==renderSeq)return;
  document.body.classList.remove('busy');
- $('#view').innerHTML=(flash?`<div class="notice" style="margin-bottom:11px">${flash}</div>`:'')+html;flash='';dirty=false;
+ if(!quiet)shownFlash=flash;  // a result notice stays through the 10 s auto-refresh until the next thing you do
+ $('#view').innerHTML=(shownFlash?`<div class="notice" style="margin-bottom:11px">${shownFlash}</div>`:'')+html;flash='';dirty=false;
  $$('#view .table').forEach(t=>{const h=[...t.querySelectorAll('th')].map(th=>th.textContent.trim());t.querySelectorAll('tbody tr').forEach(tr=>[...tr.children].forEach((td,i)=>td.dataset.label=h[i]||''))});
  $('#lastSaved').textContent='UPDATED '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
  if(afterRender){const f=afterRender;afterRender=null;f()}
@@ -443,7 +458,7 @@ async function machineStatus(id,status,el){
 }
 
 // ---------- Export / language ----------
-function doCSV(){const rows=$$('#view .table tbody tr').map(tr=>[...tr.children].map(td=>td.innerText.trim()));const csv=[['EVEREST TEXTILE MILLS',page,today()],...rows].map(r=>r.map(v=>{v=String(v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return'"'+v.replaceAll('"','""')+'"'}).join(',')).join('\r\n'),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=`everest-${page.toLowerCase()}-${today()}.csv`;a.click();URL.revokeObjectURL(a.href)}
+function doCSV(){const rows=$$('#view .table tbody tr, #view .register tr').map(tr=>[...tr.children].map(td=>td.innerText.trim()));const csv=[['EVEREST TEXTILE MILLS',page,today()],...rows].map(r=>r.map(v=>{v=String(v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return'"'+v.replaceAll('"','""')+'"'}).join(',')).join('\r\n'),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=`everest-${page.toLowerCase()}-${today()}.csv`;a.click();URL.revokeObjectURL(a.href)}
 function switchLanguage(next){lang=next;try{localStorage.setItem('everest-lang',lang)}catch{}navRender();toast(lang==='ta'?'தமிழ் வழிசெலுத்தல் இயக்கப்பட்டது':'English navigation enabled')}
 
 // ---------- Sign in / out ----------
@@ -480,7 +495,7 @@ async function firstSetup(){
  if(!username||password.length<8)return showAuthMessage('Type the owner username and a password of at least 8 characters first.');
  try{const r=await post('/auth/setup',{username,password});await startSession(r.token);toast('Owner account created.')}catch(err){showAuthMessage(err.message)}
 }
-function signOut(){if(token)fetch(API+'/auth/logout',{method:'POST',headers:{Authorization:'Bearer '+token}}).catch(()=>{});token=null;me=null;store.set('everest-token',null);currentOrder='';currentToken='';traceRoll='';editMasterId='';digestCache=null;poLines={};flash='';if(!$('#app').classList.contains('hidden')){$('#app').classList.add('hidden');$('#gate').classList.remove('hidden');showGate()}}
+function signOut(){if(token)fetch(API+'/auth/logout',{method:'POST',headers:{Authorization:'Bearer '+token}}).catch(()=>{});token=null;me=null;store.set('everest-token',null);currentOrder='';currentToken='';traceRoll='';shownFlash='';editMasterId='';digestCache=null;poLines={};flash='';if(!$('#app').classList.contains('hidden')){$('#app').classList.add('hidden');$('#gate').classList.remove('hidden');showGate()}}
 
 // ---------- Events ----------
 $('#sideNav').addEventListener('click',e=>{const b=e.target.closest('[data-page]');if(b)setPage(b.dataset.page)});

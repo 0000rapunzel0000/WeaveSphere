@@ -14,6 +14,7 @@ from mill import (accounts, auth, db, defects, digest, dispatch, inventory, live
 from mill.config import CORS_ORIGINS
 
 db.init()
+livefloor.resume_demo_clock()
 
 
 @asynccontextmanager

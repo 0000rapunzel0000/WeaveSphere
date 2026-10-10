@@ -6,3 +6,4 @@ dist/
 *.pyc
 .env
 .DS_Store
+demo.db*

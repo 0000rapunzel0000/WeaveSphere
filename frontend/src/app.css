@@ -417,3 +417,16 @@ a.primary,a.secondary{display:inline-flex;align-items:center;justify-content:cen
  body.print-label{background:#fff!important}
  body.print-label #labelSheet{display:block;page:label}
 }
+
+/* Attendance register: a month grid that scrolls sideways (never stacked into cards), worker names pinned left */
+.register-wrap{overflow-x:auto;border:1px solid #2927221c;-webkit-overflow-scrolling:touch}
+.register{border-collapse:collapse;font:500 10px var(--mono);min-width:100%}
+.register th,.register td{border:1px solid #2927221a;padding:6px 3px;text-align:center;min-width:26px;white-space:nowrap}
+.register thead th{font-weight:500;color:#8a8378;background:#f4f1ea}
+.register thead th small{display:block;font-size:8px;opacity:.7}
+.register .who{position:sticky;left:0;z-index:1;text-align:left;padding:6px 10px;min-width:120px;background:#fffefa;font:500 11px var(--sans);color:#222}
+.register thead .who{background:#f4f1ea;font:500 9px var(--mono);color:#8a8378}
+.register td.on{background:#d49a6230;color:#8a4f25;font-weight:600}
+.register .sun{background:#00000008}
+.register .today{box-shadow:inset 0 0 0 2px #d49a62}
+.register .tot{font-weight:600;color:#222;min-width:44px}

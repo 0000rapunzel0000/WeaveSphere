@@ -26,6 +26,15 @@ def mark_attendance(body: AttendanceIn, db=Depends(get_db), _=role("admin", "sup
                            (body.shift_id, body.work_date.isoformat())))
 
 
+@router.get("/attendance")
+def attendance_register(month: str | None = None, db=Depends(get_db), _=role("admin", "supervisor")):
+    """Who was present, day by day, for one month (YYYY-MM, default this month): one record per worker per shift."""
+    m = month_of(month)
+    return {"month": m, "records": rows(db.execute(
+        "SELECT a.worker_id, a.work_date, a.shift_id, s.name shift FROM attendance a JOIN shifts s ON s.id = a.shift_id "
+        "WHERE strftime('%Y-%m', a.work_date) = ? ORDER BY a.work_date, s.name", (m,)))}
+
+
 def wages(db, month):
     # ponytail: daily rate per day present (double shifts not paid extra; overtime is out of scope).
     out = rows(db.execute("""SELECT w.id, w.name, w.wage_type, w.rate,

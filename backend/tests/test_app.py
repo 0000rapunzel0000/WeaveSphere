@@ -531,3 +531,23 @@ def test_scanned_roll_links():
     ok(c.post("/qc/" + quote(link, safe=""), json={"result": "pass"}, headers=h))
     did = ok(c.post("/dispatches", json={"order_id": oid, "vehicle_no": "S1", "driver": "d"}, headers=h))["id"]
     assert ok(c.post(f"/dispatches/{did}/scan", json={"qr": f"  {link}\n"}, headers=h))["rolls"] == 1
+
+
+def test_attendance_register():
+    """Past attendance can be read back by month; days present match what wages count."""
+    h = owner_headers()
+    m = lambda t, d: ok(c.post(f"/master/{t}", json=d, headers=h))["id"]  # noqa: E731
+    w1, w2 = m("workers", {"name": "Reg A", "wage_type": "daily", "rate": 500}), m("workers", {"name": "Reg B", "wage_type": "daily", "rate": 500})
+    day, night = m("shifts", {"name": "Reg Day"}), m("shifts", {"name": "Reg Night"})
+    ok(c.post("/attendance", json={"shift_id": day, "work_date": "2026-09-03", "worker_ids": [w1, w2]}, headers=h))
+    ok(c.post("/attendance", json={"shift_id": night, "work_date": "2026-09-03", "worker_ids": [w1]}, headers=h))  # double shift
+    ok(c.post("/attendance", json={"shift_id": day, "work_date": "2026-09-04", "worker_ids": [w1]}, headers=h))
+    ok(c.post("/attendance", json={"shift_id": day, "work_date": "2026-10-01", "worker_ids": [w1]}, headers=h))  # next month
+    reg = ok(c.get("/attendance?month=2026-09", headers=h))
+    mine = [(r["work_date"], r["shift"]) for r in reg["records"] if r["worker_id"] == w1]
+    assert reg["month"] == "2026-09" and mine == [("2026-09-03", "Reg Day"), ("2026-09-03", "Reg Night"), ("2026-09-04", "Reg Day")]
+    wage = {w["id"]: w for w in ok(c.get("/wages?month=2026-09", headers=h))["workers"]}
+    assert wage[w1]["days"] == len({d for d, _ in mine}) == 2 and wage[w2]["days"] == 1
+    ok(c.post("/users", json={"username": "qc_reg", "password": "secret123", "role": "qc"}, headers=h))
+    qc = {"Authorization": "Bearer " + ok(c.post("/auth/login", json={"username": "qc_reg", "password": "secret123"}))["token"]}
+    assert c.get("/attendance", headers=qc).status_code == 403

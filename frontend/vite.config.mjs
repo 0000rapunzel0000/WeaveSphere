@@ -10,7 +10,7 @@ export default defineConfig({
   // The app calls /api/...; in development that goes to the backend on port 8000.
   server: {
     proxy: {
-      '/api': { target: 'http://localhost:8000', rewrite: (p) => p.replace(/^\/api/, '') },
+      '/api': { target: 'http://127.0.0.1:8000', rewrite: (p) => p.replace(/^\/api/, '') },
     },
   },
 });

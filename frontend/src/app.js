@@ -1,6 +1,9 @@
 /* Everest Textile Mills · operations frontend.
    All data lives on the mill server (backend/). This file only renders it and sends what people enter.
    API base: window.EVEREST_API if set, else /api (the Vite dev server proxies /api to localhost:8000). */
+import { gsap } from 'gsap';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
+gsap.registerPlugin(ScrollTrigger);
 (()=>{'use strict';
 const API=window.EVEREST_API||'/api';
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
@@ -387,6 +390,37 @@ $('#gate').addEventListener('click',e=>{
  if(e.target.id==='backToStory'){e.preventDefault();$('#gate').classList.add('hidden');$('#landing').classList.remove('hidden');location.hash='story';$('#story').scrollIntoView({behavior:'smooth'})}
 });
 $('#enterWorkspace').addEventListener('click',()=>{$('#landing').classList.add('hidden');$('#gate').classList.remove('hidden');window.scrollTo({top:0,behavior:'smooth'})});
+$('#topLogin').addEventListener('click',()=>$('#enterWorkspace').click());
+
+// Scroll-linked editorial panels: each page rises over the previous one while its
+// content, material image and production journey respond directly to scroll position.
+function initStoryScroll(){
+ if(window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+ const panels=gsap.utils.toArray('.story > section');
+ const targetsByPanel=[
+  '.story-intro .eyebrow, .story-intro h2, .story-intro-copy, .story-visual',
+  '.story-flow .section-kicker, .flow-line article',
+  '.capability-heading, .capability',
+  '.owner-copy, .owner-chart',
+  '.story-cta > *'
+ ];
+ panels.forEach((panel,index)=>{
+  const targets=panel.querySelectorAll(targetsByPanel[index]||':scope > *');
+  gsap.fromTo(targets,{y:86,autoAlpha:.18,scale:index===2 ? 0.96 : 1},{y:0,autoAlpha:1,scale:1,ease:'none',stagger:.08,scrollTrigger:{trigger:panel,start:'top 96%',end:'top 24%',scrub:.85,invalidateOnRefresh:true}});
+  const image=panel.querySelector('.story-visual img');
+  if(image)gsap.fromTo(image,{yPercent:-9,scale:1.13},{yPercent:9,scale:1,ease:'none',scrollTrigger:{trigger:panel,start:'top bottom',end:'bottom top',scrub:true}});
+  const navLink=$$('.story-links a').find(link=>link.getAttribute('href')===`#${panel.id}`);
+  if(navLink)ScrollTrigger.create({trigger:panel,start:'top 44%',onEnter:()=>setActiveStoryLink(navLink),onEnterBack:()=>setActiveStoryLink(navLink)});
+  const trace=panel.querySelector('.owner-chart svg path');
+  if(trace&&trace.getTotalLength){const length=trace.getTotalLength();gsap.set(trace,{strokeDasharray:length,strokeDashoffset:length});gsap.to(trace,{strokeDashoffset:0,ease:'none',scrollTrigger:{trigger:panel,start:'top 78%',end:'top 28%',scrub:true}})}
+ });
+ const progress=$('#storyProgress');
+ if(progress)gsap.to(progress,{scaleX:1,ease:'none',scrollTrigger:{trigger:'.story',start:'top top',end:'bottom bottom',scrub:true}});
+}
+function setActiveStoryLink(active){
+ $$('.story-links a').forEach(link=>{const selected=link===active;link.classList.toggle('active',selected);if(selected)link.setAttribute('aria-current','location');else link.removeAttribute('aria-current')});
+}
+initStoryScroll();
 
 // ---------- Start ----------
 (async()=>{

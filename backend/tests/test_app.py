@@ -56,6 +56,13 @@ def test_demo_flow():
     assert order["feasibility"]["verdict"] == "short by 120 kg" and order["stage"] == "Pending"
     ok(c.post("/grn", json={"supplier_id": sup, "yarn_type_id": yarn, "qty_kg": 120, "rate": 300}, headers=owner))
     assert ok(c.get(f"/orders/{oid}/feasibility", headers=owner))["verdict"] == "can start"
+    # A later order for the same yarn can't count stock the first order still needs.
+    probe = ok(c.post("/orders", json={"buyer_id": buyer, "fabric_type_id": fab, "colour": "red", "qty_m": 100,
+                                       "deadline": "2099-01-01", "price_per_m": 100}, headers=owner))
+    line = probe["feasibility"]["lines"][0]
+    assert (line["available_kg"], line["reserved_kg"], line["free_kg"]) == (200, 200, 0)
+    assert probe["feasibility"]["verdict"] == "short by 20 kg"
+    assert ok(c.get(f"/orders/{oid}/feasibility", headers=owner))["verdict"] == "can start"  # earlier order unaffected
     assert c.post("/issues", json={"order_id": oid, "yarn_type_id": yarn, "qty_kg": 999}, headers=owner).status_code == 409
     ok(c.post("/issues", json={"order_id": oid, "yarn_type_id": yarn, "qty_kg": 200}, headers=owner))
 
@@ -77,6 +84,14 @@ def test_demo_flow():
         assert msg["message"]["status"] == "routed" and msg["message"]["intent"] == "status"
     finally:
         ai.decide = real
+    # Auto-applied decisions are logged and can still be corrected; corrections feed the accuracy report.
+    settled = ok(c.get("/reviews?status=resolved&kind=breakdown", headers=owner))
+    assert settled[0]["auto"] and settled[0]["id"] == t["triage"]["review_id"]
+    assert c.post(f"/reviews/{t['triage']['review_id']}", headers=owner).status_code == 409  # nothing to change
+    ok(c.post(f"/reviews/{t['triage']['review_id']}", json={"category": "electrical"}, headers=owner))
+    assert ok(c.get(f"/machines/{loom}/log", headers=owner))[0]["assignee"] == "electrician"
+    acc = ok(c.get("/reviews/accuracy", headers=owner))["kinds"]["breakdown"]
+    assert (acc["auto_applied"], acc["bands"]["0.9-1.0"]) == (1, {"checked": 1, "agreed": 0, "accuracy": 0.0})
     floor = ok(c.get("/floor", headers=owner))
     assert floor["machines"][0]["order_id"] == oid and floor["machines"][0]["idle"]
     assert floor["machines"][0]["today_output"] == 1000
@@ -146,7 +161,63 @@ def test_demo_flow():
     assert c.get("/reports/pnl", headers=qc).status_code == 403
     assert ok(c.get("/reports/payables", headers=owner))[0]["outstanding"] == 60000
 
+    # A pricier delivery later must not rewrite costs already booked (rate is captured at issue time).
+    ok(c.post("/grn", json={"supplier_id": sup, "yarn_type_id": yarn, "qty_kg": 50, "rate": 1000}, headers=owner))
+    assert ok(c.get(f"/reports/order-cost/{oid}", headers=owner))["yarn"] == 60000
+    assert ok(c.get("/reports/pnl", headers=owner))["total_costs"] == 63400
+    s = [y for y in ok(c.get("/stock", headers=owner)) if y["id"] == yarn][0]
+    assert (s["stock_kg"], s["avg_rate"]) == (50, 1000)  # moving average of what is on hand
+
+
+def test_last_yarn_cannot_be_issued_twice():
+    """Two people issue the last 100 kg at the same moment: exactly one wins, stock never goes negative.
+    The stock read is slowed down so both requests are inside the check at once; only the write lock saves it."""
+    import threading
+    import time
+
+    db = app.connect()
+    sid = db.execute("INSERT INTO suppliers (name) VALUES ('race')").lastrowid
+    yid = db.execute("INSERT INTO yarn_types (count, material, colour) VALUES ('99s', 'copper', 'x')").lastrowid
+    bid = db.execute("INSERT INTO buyers (name) VALUES ('race')").lastrowid
+    fid = db.execute("INSERT INTO fabric_types (name) VALUES ('race')").lastrowid
+    oids = [db.execute("INSERT INTO orders (buyer_id, fabric_type_id, colour, qty_m, deadline, price_per_m, token) "
+                       "VALUES (?, ?, 'x', 1, '2099-01-01', 1, ?)", (bid, fid, f"race{i}")).lastrowid for i in (1, 2)]
+    real_one = app.one
+
+    def slow_one(conn, sql, *args):
+        r = real_one(conn, sql, *args)
+        if "yarn_stock" in sql:
+            time.sleep(0.05)
+        return r
+
+    app.one = slow_one
+    try:
+        for _ in range(5):
+            db.execute("INSERT INTO grn (supplier_id, yarn_type_id, qty_kg, rate) VALUES (?, ?, 100, 200)", (sid, yid))
+            start, results = threading.Barrier(2), []
+
+            def issue(order_id):
+                conn = app.connect()
+                start.wait()
+                try:
+                    app.issue_yarn(app.IssueIn(order_id=order_id, yarn_type_id=yid, qty_kg=100), db=conn, u={"id": None})
+                    results.append("ok")
+                except app.HTTPException as e:
+                    results.append(e.status_code)
+                finally:
+                    conn.close()
+
+            threads = [threading.Thread(target=issue, args=(o,)) for o in oids]
+            [th.start() for th in threads]
+            [th.join() for th in threads]
+            assert sorted(results, key=str) == [409, "ok"], results
+            assert db.execute("SELECT stock_kg FROM yarn_stock WHERE id = ?", (yid,)).fetchone()[0] == 0
+    finally:
+        app.one = real_one
+        db.close()
+
 
 if __name__ == "__main__":
     test_demo_flow()
+    test_last_yarn_cannot_be_issued_twice()
     print("ok")

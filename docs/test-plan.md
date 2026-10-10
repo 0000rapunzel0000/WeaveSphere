@@ -162,5 +162,15 @@ order"; a new message stuck to a plan still waiting for YES (now Jev judges same
 its operator removed would have been credited to the last person who ran the machine (now it can't run until reassigned);
 parallel steps shared one database connection.
 
+## Final review fixes (2026-10-11)
+
+All ten review findings fixed, each with a test (51 tests): repeated steps kept; job-form fallbacks restored (released
+jobs marked instead); worked-out steps show a placeholder; WhatsApp replies remembered before sending and messages queued
+per sender; plan names grounded in the person's words or the live floor only; a lock per sender; plan follow-ups reuse
+their steps; the vacuous test now asserts the 422; corrected quantities replace earlier ones; dead code removed. The live
+re-run found and fixed four more: freeing a worker from the job the same message gives him; "did 120 m" read as a roll
+(roll now needs the word); "two rolls" seen as one thing (code backstop); a waiting plan swallowing new floor messages
+(Jev now told the kind of work under way).
+
 Not a bug, noted: the Reviews page lists auto-applied decisions as well as waiting ones (they can still be corrected),
 so it shows more rows than the "AI reviews" count on the dashboard, which counts only the waiting ones.

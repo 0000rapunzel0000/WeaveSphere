@@ -39,6 +39,11 @@ class Bot:
         return {"fields": [{"name": k, "value": str(v), "said": str(v)} for k, v in f.items()], "question": self.question}
 
 
+def focus(prompt):
+    """The step a plan prompt asks the chat model to fill in ('' outside plans)."""
+    return prompt.split("fill in ONLY this one")[1].split('"')[1] if "fill in ONLY this one" in prompt else ""
+
+
 def prompts(bot):
     return [x for x in bot.seen if isinstance(x, str)]
 
@@ -291,6 +296,7 @@ def chain_world():
     """Loom X runs order 1 with Arun; Loom Y has order 2 with Op, idle."""
     w = world()
     w["loom_y"] = m("machines", name="Loom Y", kind="weaving")
+    ok(c.put(f"/master/machines/{w['loom']}", json={"rate_m_per_hour": 10}, headers=H["owner"]))  # live looms: crew rules apply
     w["order2"] = order(w["buyer"], w["fabric"], 300)
     post("/jobs", {"order_id": w["order"], "machine_id": w["loom"], "operator_id": w["arun"], "shift_id": w["night"]})
     post(f"/machines/{w['loom']}/status", {"status": "Running"})
@@ -307,10 +313,10 @@ def test_several_things_in_one_message_run_as_a_chain(monkeypatch):
     bot.route = lambda conv: {"Set": "machine_status", "Put": "change_operator", "Free": "release_worker"}.get(conv[-1].split()[1], "none")
 
     def fields(prompt):
-        focus = prompt.split("fill in ONLY this one: ")[1].split("\n")[0] if "ONLY this one" in prompt else ""
-        if "Set Loom Y" in focus:
+        step = focus(prompt)
+        if "Set Loom Y" in step:
             return {"machine": "Loom Y", "status": "Running"}
-        if "Put Arun" in focus:
+        if "Put Arun" in step:
             return {"machine": "Loom Y", "operator": "Arun Kumar"}
         return {"worker": "Arun Kumar", "keep": "Loom Y"}
     bot.fields = fields
@@ -324,8 +330,10 @@ def test_several_things_in_one_message_run_as_a_chain(monkeypatch):
     assert (floor["Loom Y"]["status"], floor["Loom Y"]["operator"]) == ("Running", "Arun Kumar")
     assert (floor["Loom X"]["status"], floor["Loom X"]["operator"], floor["Loom X"]["order_id"]) == ("Idle", None, w["order"])
     assert "Arun Kumar was moved off this job" in get(f"/machines/{w['loom']}/log")[0]["note"]
-    # Loom X can't restart under Arun's name: it needs a new operator first.
-    assert c.post(f"/machines/{w['loom']}/status", json={"status": "Running"}, headers=H["owner"]).status_code in (200, 422)
+    # Loom X can't restart under Arun's name (he was the last to run it): it needs a new operator first.
+    post("/production", {"shift_id": w["night"], "machine_id": w["loom"], "order_id": w["order"], "operator_id": w["arun"], "output": 1, "hours": 1})
+    r = c.post(f"/machines/{w['loom']}/status", json={"status": "Running"}, headers=H["owner"])
+    assert r.status_code == 422 and "needs an operator and shift" in r.json()["detail"]
 
 
 def test_a_later_step_uses_what_an_earlier_step_made(monkeypatch):
@@ -335,7 +343,7 @@ def test_a_later_step_uses_what_an_earlier_step_made(monkeypatch):
     bot.several, bot.level = True, "hard"
     bot.steps = ["Open a truck for order 1, vehicle TN 9, driver Ravi", f"Load roll {q} onto the new truck from step 1"]
     bot.route = lambda conv: "open_truck" if "Open" in conv[-1] else "load_roll"
-    bot.fields = lambda p: {"order": "1", "vehicle": "TN 9", "driver": "Ravi"} if "ONLY this one: \"Open" in p else {"truck": "@step1", "roll": q}
+    bot.fields = lambda p: {"order": "1", "vehicle": "TN 9", "driver": "Ravi"} if focus(p).startswith("Open") else {"truck": "@step1", "roll": q}
     bot.match = 0.4  # Jev unsure: the whole plan is shown first
     r = say(f"open a truck for order 1, TN 9, driver Ravi, and load {q} on it", "store")
     assert r["status"] == "confirming" and "1. Open a truck for order #1: TN 9, driver Ravi" in r["reply"]
@@ -351,11 +359,11 @@ def test_a_plan_asks_for_what_a_step_is_missing_and_stops_at_a_refusal(monkeypat
     bot.several = True
     bot.steps = ["Issue 30 kg cotton to order 1", "Issue polyester to order 1"]
     bot.route = "issue_yarn"
-    bot.fields = lambda p: {"order": "1", "yarn": "cotton", "kg": "30"} if "30 kg" in p.split("ONLY this one")[1][:40] else {"order": "1"}
+    bot.fields = lambda p: {"order": "1", "yarn": "cotton", "kg": "30"} if "30 kg" in focus(p) else {"order": "1"}
     r = say("issue 30 kg cotton to order 1 and polyester too", "store")
     assert r["status"] == "collecting" and r["reply"].startswith("To do all of this I still need:\n2. Issue polyester to order 1: I need the yarn; the kg")
     bot.steps = ["Issue 30 kg cotton to order 1", "Issue 500 kg cotton to order 1"]
-    bot.fields = lambda p: {"order": "1", "yarn": "cotton", "kg": "30" if "30 kg" in p.split("ONLY this one")[1][:40] else "500"}
+    bot.fields = lambda p: {"order": "1", "yarn": "cotton", "kg": "30" if "30 kg" in focus(p) else "500"}
     r = say("make the second one 500 kg cotton", "store")
     assert r["status"] == "failed" and r["reply"].splitlines()[0].startswith("1. Done: Issue 30 kg")
     assert "2. Not saved: Issue 500 kg" in r["reply"] and "only 70 kg in stock" in r["reply"]
@@ -379,7 +387,134 @@ def test_a_plan_that_drops_a_quantity_is_never_run_straight_away(monkeypatch):
     bot.several, bot.match = True, 0.99
     bot.steps = ["Mark Op present on Day shift", "Make a 90 m roll for order 1 from Loom X, Day shift, Op"]
     bot.route = lambda conv: "mark_attendance" if "Mark" in conv[-1] else "make_roll"
-    bot.fields = lambda p: {"shift": "Day", "workers": "Op"} if "ONLY this one: \"Mark" in p else \
+    bot.fields = lambda p: {"shift": "Day", "workers": "Op"} if focus(p).startswith("Mark") else \
         {"order": "1", "machine": "Loom X", "shift": "Day", "operator": "Op", "metres": "90"}
     r = say("loom x did 90m day shift order 1 Op 8hrs, make a 90m roll from it, mark Op present", "supervisor")
     assert r["status"] == "confirming" and r["reply"].startswith("I haven't used 8 hrs from your message") and get("/rolls?order_id=1") == []
+
+
+def test_job_card_fallbacks_still_work_for_the_form(monkeypatch):
+    """The job form's 'Last operator / Last shift on this machine' options: each missing one comes from the last entry."""
+    w = world()
+    ok(c.put(f"/master/machines/{w['loom']}", json={"rate_m_per_hour": 10}, headers=H["owner"]))
+    post("/production", {"shift_id": w["night"], "machine_id": w["loom"], "order_id": w["order"], "operator_id": w["arun"], "output": 1, "hours": 1})
+    for job in ({"operator_id": w["op"]}, {"shift_id": w["shift"]}):
+        post("/jobs", {"order_id": w["order"], "machine_id": w["loom"], **job})
+        assert c.post(f"/machines/{w['loom']}/status", json={"status": "Running"}, headers=H["owner"]).status_code == 200, job
+        post(f"/machines/{w['loom']}/status", {"status": "Idle"})
+
+
+def test_two_identical_steps_both_run(monkeypatch):
+    w, bot = world(), Bot(monkeypatch)
+    bot.several, bot.route = True, "make_roll"
+    bot.steps = ["Make a 100 m roll for order 1 from Loom X, Day shift, Op"] * 2
+    bot.fields = {"order": "1", "machine": "Loom X", "shift": "Day", "operator": "Op", "metres": "100"}
+    r = say("make two 100 m rolls for order 1 from loom x, day shift, Op", "supervisor")
+    assert r["status"] == "done" and len(get("/rolls?order_id=1")) == 2, r["reply"]
+
+
+def test_a_step_worked_out_from_an_earlier_one_shows_a_placeholder_then_runs(monkeypatch):
+    """Paying 'its invoice' after closing a truck: the payment's buyer is only known once the truck is closed."""
+    w, bot = world(), Bot(monkeypatch)
+    q = roll(w, w["order"], 40)
+    post(f"/qc/{q}", {"result": "pass"})
+    truck = post("/dispatches", {"order_id": w["order"], "vehicle_no": "TN 9", "driver": "D"})["id"]
+    post(f"/dispatches/{truck}/scan", {"qr": q})
+    bot.several, bot.match = True, 0.4
+    bot.steps = [f"Close truck {truck} and raise the invoice", "Record 1000 rupees against the new invoice from step 1"]
+    bot.route = lambda conv: "close_truck" if "Close" in conv[-1] else "record_payment"
+    bot.fields = lambda p: {"truck": str(truck)} if focus(p).startswith("Close") else {"invoice": "@step1", "amount": "1000"}
+    r = say(f"close truck {truck} and record 1000 rs against its invoice", "admin")
+    assert r["status"] == "confirming" and "from (worked out when it runs) against INV-(the new invoice from step 1)" in r["reply"]
+    r = say("yes", "admin")
+    assert r["status"] == "done" and "2. Done: Record ₹1,000.00 from B against INV-00001" in r["reply"]
+    assert get("/reports/receivables")[0]["paid"] == 1000
+
+
+def test_a_plan_step_cannot_use_a_number_the_person_never_wrote(monkeypatch):
+    """The splitter wrote '8 hours' into a step; the person never said it, so it is asked for, not saved."""
+    w, bot = world(), Bot(monkeypatch)
+    bot.several, bot.steps = True, ["Log 120 m on Loom X for order 1, Night shift, Arun Kumar, 8 hours", "Mark Arun Kumar present on Night shift"]
+    bot.route = lambda conv: "log_production" if "Log" in conv[-1] else "mark_attendance"
+    bot.fields = lambda p: {"machine": "Loom X", "order": "1", "shift": "Night", "operator": "Arun Kumar", "output": "120", "hours": "8"} \
+        if focus(p).startswith("Log") else {"shift": "Night", "workers": "Arun Kumar"}
+    r = say("loom x did 120 m night order 1 arun kumar, and mark him present night", "supervisor")
+    assert r["status"] == "collecting" and "1. Log 120 m" in r["reply"] and "the hours worked" in r["reply"] and get("/production") == []
+
+
+def test_a_plan_follow_up_keeps_its_steps(monkeypatch):
+    w, bot = world(), Bot(monkeypatch)
+    bot.several, bot.route = True, "issue_yarn"
+    bot.steps = ["Issue 30 kg cotton to order 1", "Issue cotton to order 1"]
+    bot.fields = lambda p: {"order": "1", "yarn": "cotton", "kg": "30" if "30 kg" in focus(p) else ""}
+    assert say("issue 30 kg cotton to order 1 and some more cotton too", "store")["status"] == "collecting"
+    splits = sum("Split what they want" in x for x in prompts(bot))
+    bot.steps = ["something else entirely"]  # a second split would change the plan; it must not happen
+    bot.fields = lambda p: {"order": "1", "yarn": "cotton", "kg": "30" if "30 kg" in focus(p) else "5"}
+    r = say("5 kg", "store")
+    assert r["status"] == "done" and sum("Split what they want" in x for x in prompts(bot)) == splits
+    assert sorted(i["qty_kg"] for i in get("/issues")) == [5, 30]
+
+
+def test_a_corrected_quantity_replaces_the_old_one():
+    talk = ["user: issue 30 kg cotton and 20 kg polyester to order 1", "bot: Please check…", "user: actually 25 kg polyester"]
+    plan = [{"values": {"kg": 30.0}}, {"values": {"kg": 25.0}}]
+    assert assistant.unused_quantities(talk, plan) == []
+    assert assistant.unused_quantities(["user: loom 1 did 90m, 8hrs"], [{"values": {"metres": 90.0}}]) == ["8 hrs"]
+
+
+def test_one_message_at_a_time_per_sender():
+    u = {"id": 1}
+    assert assistant.one_at_a_time(u, "web", "") is assistant.one_at_a_time(u, "web", "")
+    assert assistant.one_at_a_time(u, "web", "") is not assistant.one_at_a_time(u, "whatsapp", "91")
+
+
+def test_freeing_someone_never_frees_the_job_the_same_message_gives_them(monkeypatch):
+    """Arun already runs Loom Y; 'set it running, put Arun on it, free Arun from other jobs' must leave Loom Y running."""
+    w, bot = chain_world(), Bot(monkeypatch)
+    post("/jobs", {"order_id": w["order2"], "machine_id": w["loom_y"], "operator_id": w["arun"], "shift_id": w["night"]})
+    bot.several, bot.level = True, "hard"
+    bot.steps = ["Set Loom Y to Running", "Free Arun Kumar from his other jobs", "Put Arun Kumar on Loom Y instead of Op"]
+    bot.route = lambda conv: {"Set": "machine_status", "Put": "change_operator", "Free": "release_worker"}.get(conv[-1].split()[1], "none")
+    bot.fields = lambda p: ({"machine": "Loom Y", "status": "Running"} if focus(p).startswith("Set") else
+                            {"machine": "Loom Y", "operator": "Arun Kumar"} if focus(p).startswith("Put") else {"worker": "Arun Kumar"})
+    r = say("set loom y running, put Arun Kumar on it instead of Op, free Arun Kumar from other jobs", "supervisor")
+    assert r["status"] == "done" and "2. Done: Take Arun Kumar off Loom X (order #1" in r["reply"] and "Loom Y (order" not in r["reply"].splitlines()[1]
+    floor = {x["name"]: x for x in get("/floor")["machines"]}
+    assert (floor["Loom Y"]["status"], floor["Loom Y"]["operator"]) == ("Running", "Arun Kumar")
+    assert floor["Loom X"]["operator"] is None
+
+
+def test_a_roll_needs_the_word_roll(monkeypatch):
+    """'Loom x did 120 m' misread as a roll: code holds it for a YES, whatever Jev says."""
+    w, bot = world(), Bot(monkeypatch)
+    bot.several, bot.match = True, 0.99
+    bot.steps = ["Make a 120 m roll for order 1 from Loom X, Day shift, Op", "Mark Op present on Day shift"]
+    bot.route = lambda conv: "make_roll" if "roll" in conv[-1] else "mark_attendance"
+    bot.fields = lambda p: {"order": "1", "machine": "Loom X", "shift": "Day", "operator": "Op", "metres": "120"} \
+        if focus(p).startswith("Make") else {"shift": "Day", "workers": "Op"}
+    r = say("loom x did 120 m day order 1 Op and mark Op present day shift", "supervisor")
+    assert r["status"] == "confirming" and r["reply"].startswith("You didn't mention a roll (step 1)") and get("/rolls?order_id=1") == []
+
+
+def test_a_date_nobody_said_is_dropped(monkeypatch):
+    w, bot = world(), Bot(monkeypatch)
+    bot.route = "log_production"
+    bot.fields = {"machine": "Loom X", "order": "1", "shift": "Night", "operator": "Arun", "output": "120", "hours": "8"}
+    bot.seen_date = bot.fields | {"date": str(date.today().replace(day=1))}
+    bot.fields = bot.seen_date  # the model "worked out" a date from 'night shift'; the person never wrote one
+    r = say("loom x did 120 m night shift order 1, Arun, 8 hours", "supervisor")
+    assert r["status"] == "done" and get("/production")[0]["entry_date"] == date.today().isoformat()
+
+
+def test_a_second_action_word_means_several():
+    assert assistant.looks_several("loom 4 did 120 m night order 1 meena 8 hours and mark her present night shift")
+    assert assistant.looks_several("set #5 to running, also assign Arun")
+    assert not assistant.looks_several("Loom 04 did 130 metres on night shift for order 1, Arun Kumar ran it, 8 hours")
+    assert not assistant.looks_several("issue 30 kg cotton and polyester to order 1")
+
+
+def test_names_count_by_their_distinctive_words():
+    words = assistant.norm("user: put Meena on loom 4 and S Ravi on loom 1, night shift")
+    assert assistant.mentioned("Meena Devi", words) and assistant.mentioned("Loom 04", words) and assistant.mentioned("S. Ravi", words)
+    assert not assistant.mentioned("Loom 02", words) and not assistant.mentioned("Arun Kumar", words)

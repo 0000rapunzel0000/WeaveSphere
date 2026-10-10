@@ -22,7 +22,15 @@ const AUTH = process.env.AUTH_DIR || 'auth'
 const QR_PNG = process.env.QR_PNG || 'link-qr.png'
 const PAIR_PHONE = (process.env.PAIR_PHONE || '').replace(/\D/g, '')
 let opened = false, paired = false
-const sent = new Set()  // ids of our own replies, so in "Message yourself" the bot never answers itself
+// Our own replies, so in "Message yourself" the bot never answers itself. The text is remembered BEFORE sending: WhatsApp
+// can echo the reply back before sendMessage returns its id.
+const sent = new Set(), sending = new Set()
+const queues = new Map()  // one message at a time per sender, in order
+const inOrder = (who, job) => {
+  const next = (queues.get(who) || Promise.resolve()).then(job, job)
+  queues.set(who, next)
+  next.finally(() => { if (queues.get(who) === next) queues.delete(who) })
+}
 const digits = jid => (jid || '').split('@')[0].split(':')[0]
 
 async function ask(phone, text) {
@@ -68,15 +76,19 @@ async function start() {
       const self = [digits(sock.user?.id), digits(sock.user?.lid)].includes(digits(jid))
       if (sent.has(m.key.id) || (m.key.fromMe && !self)) continue                        // our replies; our chats with others
       const text = (m.message?.conversation || m.message?.extendedTextMessage?.text || '').trim()
-      if (!text) continue
+      if (!text || (m.key.fromMe && sending.has(text))) continue                         // a reply of ours, echoed early
       // Newer WhatsApp hides numbers behind "@lid" ids; the phone number comes alongside when WhatsApp shares it.
       const phone = self ? digits(sock.user.id) : digits(jid.endsWith('@lid') ? (m.key.senderPn || m.key.remoteJidAlt || jid) : jid)
-      try {
-        await sock.sendPresenceUpdate('composing', jid)
-        const reply = await ask(phone, text)
-        const out = await sock.sendMessage(jid, { text: reply }, { quoted: m })
-        if (out?.key?.id) sent.add(out.key.id)
-      } catch (e) { console.error('Could not answer:', e.message) }
+      inOrder(phone, async () => {
+        try {
+          await sock.sendPresenceUpdate('composing', jid)
+          const reply = await ask(phone, text)
+          sending.add(reply)
+          setTimeout(() => sending.delete(reply), 60_000)
+          const out = await sock.sendMessage(jid, { text: reply }, { quoted: m })
+          if (out?.key?.id) { sent.add(out.key.id); setTimeout(() => sent.delete(out.key.id), 600_000) }
+        } catch (e) { console.error('Could not answer:', e.message) }
+      })
     }
   })
 }

@@ -28,6 +28,7 @@ class Skill:
     prepare: object = None # db, values, names -> a problem to ask about, or None (for values worked out from others)
     rules: list = field(default_factory=list)  # [values -> a question, or None]
     gives: tuple = None    # (kind, response -> value): what this makes that a later step in the same message can use
+    needs: str = None      # regex: words the person must have used for this skill (code's guard against a misread step)
 
 
 class Ref:

@@ -84,7 +84,7 @@ def release_worker(wid: int, body: ReleaseIn, db=Depends(get_db), _=role("admin"
         for j in jobs:
             if body.job_ids is not None and j["id"] not in body.job_ids:
                 continue
-            db.execute("UPDATE job_cards SET operator_id = NULL, last_tick = NULL WHERE id = ?", (j["id"],))
+            db.execute("UPDATE job_cards SET operator_id = NULL, last_tick = NULL, released = 1 WHERE id = ?", (j["id"],))
             stopped = j["status"] == "Running"
             if stopped:
                 db.execute("UPDATE machines SET status = 'Idle' WHERE id = ?", (j["machine_id"],))

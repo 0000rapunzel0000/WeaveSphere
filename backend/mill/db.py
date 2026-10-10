@@ -24,7 +24,8 @@ def migrate(db):
                             ("ai_reviews", "final", "TEXT"), ("machines", "rate_m_per_hour", "REAL NOT NULL DEFAULT 0"),
                             ("job_cards", "operator_id", "INTEGER REFERENCES workers"),
                             ("job_cards", "shift_id", "INTEGER REFERENCES shifts"), ("job_cards", "running_since", "TEXT"),
-                            ("job_cards", "last_tick", "TEXT"), ("production_entries", "auto", "INTEGER NOT NULL DEFAULT 0"),
+                            ("job_cards", "last_tick", "TEXT"),
+                            ("job_cards", "released", "INTEGER NOT NULL DEFAULT 0"), ("production_entries", "auto", "INTEGER NOT NULL DEFAULT 0"),
                             ("buyer_messages", "external_id", "TEXT"), ("bot_conversations", "difficulty", "TEXT"),
                             ("bot_conversations", "model", "TEXT")]:
         have = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}

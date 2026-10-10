@@ -30,11 +30,18 @@ The reply says what was saved and what followed from it (Jev's breakdown triage,
   truck #2, loads both rolls onto truck #2 and closes it; "book 500 m poplin for Meridian … and issue 50 kg cotton to it"
   issues to the new order. Skills that make something say so (`gives=`); the later step's value is filled in when it runs.
 - Every step goes through steps 1–3 on its own (Jev picks its skill; anything missing is asked per step, numbered).
+  Answering keeps the steps and their numbers; if an answer doesn't help, the message is split again. Changing a plan
+  that waits for YES re-reads the whole conversation. A step is filled from its own words, never from another step's.
+- Names in a step must come from the person's words or the live floor (real data), never from text a model wrote;
+  quantities and dates only from the person.
+- Jev's one-or-several answer has a code backstop: a second action word after and / also / then ("… and mark her present").
 - Then two checks on the whole plan: **Jev** compares it with the conversation, and **code** checks every quantity the
   person wrote (90 m, 8 hrs, 50 kg, ₹…) is used by some step — a dropped or misread step can't slip through on Jev's word.
-  Both pass → it runs; otherwise the numbered plan is shown for YES.
+  A step whose skill needs a word the person never used is held too (a roll needs "roll": "loom 4 did 120 m" is
+  output, never a roll). All pass → it runs; otherwise the numbered plan is shown for YES, with the reason.
 - Steps run in order; the first refusal stops the rest, and the reply says what was saved and what wasn't.
-- The same step twice runs once. Steps a role can't do stop the whole plan before anything is saved.
+- Repeats are kept ("two 100 m rolls" is two steps). Steps a role can't do stop the whole plan before anything is saved.
+- "Free Arun from his other jobs" never frees the job the same message gives him, in whatever order the steps run.
 
 ## Which model: by difficulty
 
@@ -55,9 +62,11 @@ thinking on 3.7-flash took 9–90 s for the same steps. A typical chain answers 
 A conversation is one request. It ends when the request is **done**, **fails** or is **cancelled** ("cancel"), on
 **"thanks"** (any language), or after **30 quiet minutes**. The next message starts with no history at all.
 
+- Each sender's messages are handled one at a time (the backend locks per sender; the bridge queues per sender).
 - Mid-request, **Jev** decides whether a new message is part of the request (an answer, a correction, "also put Arun on
   it") or a new one ("how much polyester is left?", another day's output) — shown only the request, what the assistant
-  last asked and the new message (with the whole transcript it lumped unrelated floor messages together). A new one closes
+  last asked, the kind of work under way and the new message (with the whole transcript it lumped unrelated floor
+  messages together). A long message with its own quantity or second action needs less to count as new. A new one closes
   the half-finished request and starts clean. Two-word answers ("40 kg", "Arun") are never checked.
 - "No wait, make it 35" right after something was saved: the assistant says it was already saved and that entries
   are corrected in the app (nothing is ever deleted from chat).
@@ -83,7 +92,9 @@ camera scanner (screen things).
 
 *release_worker* takes the person off every job they run now (the list is fixed when the plan is made, so a job a later
 step gives them is kept); a running machine stops, with a note, until someone else is put on it — live output is never
-credited to someone who isn't there.
+credited to someone who isn't there (the job is marked released, so it can't borrow the machine's last operator; the job
+form's "Last operator / Last shift on this machine" choices still work everywhere else). *change_operator* puts a worker
+on a machine's current job, or on a named order when the machine has none.
 
 **Adding a skill** is one `skill(...)` call in the right module: a plain description (Jev chooses by it — say what the
 person would be asking for), the roles, the fields (each a record kind, number, date, choice or text), how to build the

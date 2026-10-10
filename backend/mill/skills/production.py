@@ -20,7 +20,8 @@ skill("make_roll", "Create a finished roll of fabric off a machine; it gets a QR
       lambda v: ("POST", "/rolls", {"order_id": v["order"], "machine_id": v["machine"], "shift_id": v["shift"],
                                     "operator_id": v["operator"], "metres": v["metres"]}),
       lambda v, n: f"make a {g(v['metres'])} m roll for order #{v['order']} from {n['machine']}, {n['shift']} shift, {n['operator']}",
-      lambda r, v, n: f"Roll {r['qr']} is waiting for QC.", gives=("roll", lambda r: r["qr"]))
+      lambda r, v, n: f"Roll {r['qr']} is waiting for QC.", gives=("roll", lambda r: r["qr"]),
+      needs=r"\brolls?\b|ரோல்|रोल")  # "loom 4 did 120 m" is output to log, never a roll
 
 
 def _triage(r, v, n):
@@ -49,30 +50,37 @@ skill("assign_job", "PUT a new order on a machine (open a job card): which order
       lambda v, n: f"put order #{v['order']} on {n['machine']} with {n['operator']}, {n['shift']} shift")
 
 def _current_job(db, v, n):
+    """The machine's current job gives the order and shift unless the person named them. No job and no order: ask."""
     j = db.execute("SELECT j.order_id, j.shift_id, w.name, s.name FROM job_cards j LEFT JOIN workers w ON w.id = j.operator_id "
                    "LEFT JOIN shifts s ON s.id = j.shift_id WHERE j.machine_id = ? AND j.status = 'open'", (v["machine"],)).fetchone()
-    if not j:
-        return f"{n['machine']} has no job right now. Which order should it run? (Put the order on the machine instead.)"
-    v["_order"], n["_was"] = j[0], j[2] or "nobody"
+    n["_was"] = (j[2] if j else None)
+    v["_order"] = v.get("order") or (j and j[0])
+    if not v["_order"]:
+        return f"Which order should {n['machine']} run?"
     if not v.get("shift"):
-        if not j[1]:
+        if not (j and j[1]):
             return "Which shift?"
         v["shift"], n["shift"] = j[1], j[3]
 
 
-skill("change_operator", "SWAP the operator on a machine's current job: put a different worker on it ('Arun instead of "
-      "Lakshmi on loom 2'). The machine keeps its order.", FLOOR,
-      [F("machine", "machine", "machine"), F("operator", "worker", "new operator"), F("shift", "shift", "shift", required=False)],
+skill("change_operator", "PUT a worker on a machine: on its current job ('Arun instead of Lakshmi on loom 2', 'put Meena on "
+      "loom 4'), or on a new order if one is named.", FLOOR,
+      [F("machine", "machine", "machine"), F("operator", "worker", "operator"), F("shift", "shift", "shift", required=False),
+       F("order", "order", "order, if it changes", required=False)],
       lambda v: ("POST", "/jobs", {"order_id": v["_order"], "machine_id": v["machine"], "operator_id": v["operator"], "shift_id": v["shift"]}),
-      lambda v, n: f"put {n['operator']} on {n['machine']} (order #{v.get('_order', '?')}, {n.get('shift', '?')} shift) instead of {n.get('_was', 'the current operator')}",
+      lambda v, n: f"put {n['operator']} on {n['machine']} (order #{v.get('_order', '?')}, {n.get('shift', '?')} shift)"
+                   + (f" instead of {n['_was']}" if n.get("_was") and n["_was"] != n["operator"] else ""),
       prepare=_current_job)
 
 
 def _other_jobs(db, v, n):
-    jobs = db.execute("SELECT j.id, m.name, j.order_id, m.status FROM job_cards j JOIN machines m ON m.id = j.machine_id "
-                      "WHERE j.status = 'open' AND j.operator_id = ?", (v["worker"],)).fetchall()  # fixed now: a later step's job is kept
-    v["_jobs"] = [j[0] for j in jobs]
-    n["_jobs"] = "; ".join(f"{j[1]} (order #{j[2]}{', it stops until someone else is put on it' if j[3] == 'Running' else ''})" for j in jobs)
+    # The list is fixed now, so a job a later step gives them is never freed; in a plan, the machine another step puts
+    # them on is taken off it too (assistant.other_jobs_only).
+    jobs = db.execute("SELECT j.id, m.name, j.order_id, m.status, j.machine_id FROM job_cards j JOIN machines m ON m.id = j.machine_id "
+                      "WHERE j.status = 'open' AND j.operator_id = ?", (v["worker"],)).fetchall()
+    v["_jobs"], v["_job_machines"] = [j[0] for j in jobs], [j[4] for j in jobs]
+    n["_job_list"] = [f"{j[1]} (order #{j[2]}{', it stops until someone else is put on it' if j[3] == 'Running' else ''})" for j in jobs]
+    n["_jobs"] = "; ".join(n["_job_list"])
 
 
 skill("release_worker", "FREE a worker from the jobs they are on now (take them off their machines), e.g. to move them to "

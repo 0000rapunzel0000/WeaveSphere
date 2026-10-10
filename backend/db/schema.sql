@@ -123,7 +123,8 @@ CREATE TABLE IF NOT EXISTS job_cards ( -- stage = machine.kind
   operator_id INTEGER REFERENCES workers, -- who live output is credited to
   shift_id INTEGER REFERENCES shifts,
   running_since TEXT, -- UTC; when the machine last started running this job
-  last_tick TEXT      -- UTC; live output has been counted up to here (NULL while stopped)
+  last_tick TEXT,     -- UTC; live output has been counted up to here (NULL while stopped)
+  released INTEGER NOT NULL DEFAULT 0 -- 1 = its operator was moved off it: never credit the machine's last operator
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS machine_status_log (

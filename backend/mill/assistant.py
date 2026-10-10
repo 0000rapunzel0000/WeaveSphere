@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import secrets
+import threading
 from datetime import date, timedelta
 
 import anyio.from_thread
@@ -37,7 +38,6 @@ IDLE_MINUTES = 30
 PLAN = "plan"            # the conversation's skill when one message asks for several things
 
 # The chat model for a message, by how hard Jev rates it. Light and quick for a plain one-liner; strong for a tangle.
-LEVELS = ("easy", "medium", "hard")
 # Measured on this app's own messages (Oct 2026): flash-lite ~1.5 s but misses references like "#5" = Loom 02; 2.5-flash
 # ~2-3 s; 3.7-flash ~6 s and resolves every reference; 3.1-pro and 3.8-flash were no better here and took 10-45 s.
 MODELS = {"easy": os.environ.get("ASSISTANT_MODEL_EASY", "google/gemini-3.5-flash-lite"),
@@ -48,12 +48,10 @@ DIFFICULTY = {
     "medium": "informal, abbreviated or mixed-language wording, or details that need working out (dates, short names)",
     "hard": "several requests at once, references to other records or people ('#5', 'he', 'it'), conditions "
             "('if he has other jobs'), corrections, or anything that needs careful reading"}
-ACTIONS = {"one": "the message asks for one thing (one entry to record, one change, or one question)",
-           "several": "the message asks for two or more different things to be done"}
+ACTIONS = {"one": "the message asks for one thing, done once (one entry to record, one change, or one question)",
+           "several": "the message asks for two or more things to be done, including the same action more than once "
+                      "('two rolls', 'both looms', 'Meena on loom 4 and Ravi on loom 1')"}
 
-
-def harder(a, b):
-    return max(a or "easy", b or "easy", key=LEVELS.index)
 
 # Records a field can name: (id, label) per kind. Labels are what the chat model sees and what names are matched against.
 CATALOG = {
@@ -264,27 +262,44 @@ def extract(db, u, sk, lines, model=None, focus=None, refs=None):
                         "roll": "; a roll code like ETM-1A2B3C4D5E"}.get(f.kind, "") for f in sk.fields)
     chain = ("\nEarlier steps in this same message create: " + "; ".join(f"step {n} → a new {k}" for n, k in refs.items())
              + ". If a field is what one of them creates, write the value as @stepN (e.g. @step1).\n") if refs else ""
-    part = (f"\nThe person asked for several things; fill in ONLY this one: \"{focus}\"\nThis step was written from their "
-            "message and the floor below, so the details it states count as given.\n" if focus else "")
+    part = (f"\nThe person asked for several things; fill in ONLY this one, from the details written in it: \"{focus}\"\n"
+            "This step was written from their message and the floor below: every detail it states (machine, order, shift, "
+            "person) counts as what the person said - fill it in, and give its words as 'said'.\n" if focus else "")
     out = ai.chat_json(
         f"You fill in one request for a textile mill's system from a chat. Today is {date.today().isoformat()} ({date.today():%A}). "
         f"The person is {u['username']} ({u['role']}).\n\nRequest: {sk.name} — {sk.desc}\nFields:\n{spec}\n{part}{chain}\n"
         f"The mill's records (write names exactly as listed; orders, invoices, POs, trucks, reviews and messages by number):\n{known}\n\n"
         f"The floor right now:\n{floor_context(db)}\n\n"
-        "Rules:\n- Use only what the person said in this conversation. Never guess or fill in a value they did not give, required "
-        "or not (no default dates, no assumed people); leave it out.\n- For each field also give 'said': the exact words the person used "
-        "for it, copied from their messages.\n"
-        "- Later messages correct earlier ones.\n- Work out relative dates ('yesterday', 'Friday').\n"
+        "Rules:\n" + ("- Fill the fields from the step's own words; use the conversation only to understand them. Other "
+                      "steps and later messages about other machines or people do not change this step.\n" if focus else
+                      "- Use only what the person said in this conversation. Never guess or fill in a value they did not give, "
+                      "required or not (no default dates, no assumed people); leave it out.\n- Later messages correct earlier ones.\n")
+        + "- For each field also give 'said': the exact words used for it.\n- Work out relative dates ('yesterday', 'Friday').\n"
         "- If a required field is missing or unclear, set 'question' to ONE short question asking for all of them, in the language "
         "the person writes in. Otherwise leave 'question' empty.\n\nConversation:\n" + "\n".join(lines), FIELDS, model)
     fields = [f for f in out.get("fields") or [] if isinstance(f, dict) and f.get("name")]
     return {f["name"]: f.get("value", "") for f in fields}, {f["name"]: f.get("said") or "" for f in fields}, (out.get("question") or "").strip()
 
 
-def grounded(sk, given, said, lines, extra=()):
+FLOOR_KINDS = {"machine", "worker", "workers", "order", "shift", "job"}  # what the floor context names
+
+
+def mentioned(src, words):
+    """Were these words used? Whole, or by their distinctive parts: every number in them and at least one real word
+    ('Meena Devi' when the person wrote 'Meena'; 'Loom 04' never for 'loom 2')."""
+    if norm(src) and norm(src) in words:
+        return True
+    toks = [norm(t) for t in re.findall(r"\w+", src)]
+    nums, names = [t for t in toks if t.isdigit()], [t for t in toks if len(t) >= 3 and not t.isdigit()]
+    return bool(names) and all(t in words for t in nums) and any(t in words for t in names)
+
+
+def grounded(sk, given, said, lines, floor=""):
     """Code's own check on the chat model: a name or number it filled in must come from words the person actually wrote.
-    Anything else is dropped, so it gets asked for instead of being made up."""
-    words = norm(" ".join([x for x in lines if x.startswith("user:")] + list(extra)))  # extra: the plan's steps
+    Anything else is dropped, so it gets asked for instead of being made up. Machine, worker, order and shift names may
+    also come from the live floor (real data: '#5' is the order Loom 02 runs) - never from text a model wrote."""
+    words = norm(" ".join(x for x in lines if x.startswith("user:")))
+    known = norm(floor)
     kinds = {f.name: f.kind for f in sk.fields}
     keep = {}
     for k, v in given.items():
@@ -292,13 +307,17 @@ def grounded(sk, given, said, lines, extra=()):
         if STEP_REF.match(str(v).strip()):  # made by an earlier step: resolve() checks it is the right kind
             keep[k] = v
             continue
-        if kind in ("date", "month", "choice", "text"):  # worked out or reworded ("yesterday", "broke down"): Jev judges these
+        if kind in ("choice", "text"):  # reworded ("broke down" -> Breakdown, a note): Jev judges these
             keep[k] = v
+        elif kind in ("date", "month"):  # worked out from words the person used ("yesterday", "10 Oct"); never a default
+            if src and mentioned(src, words):
+                keep[k] = v
         elif kind == "number":
             n = number(v)
             if n is not None and norm(str(int(n)) if n == int(n) else str(n)) in words:
                 keep[k] = v
-        elif src and norm(src) and norm(src) in words and len(src.split()) <= 6:  # a name, not a whole sentence
+        elif src and norm(src) and len(src.split()) <= 6 and (  # a name, not a whole sentence
+                mentioned(src, words) or (kind in FLOOR_KINDS and mentioned(src, known))):
             keep[k] = v
     return keep
 
@@ -308,19 +327,37 @@ TURN = {"same": "it only gives what the assistant asked for, or changes or adds 
                "even if it mentions the same machines or people"}
 
 
-def new_request(msgs, text):
+def new_request(msgs, text, kinds):
     """Jev: is the latest message part of the request under way, or a new one? A new one starts a clean conversation.
-    Jev is shown just three things (the request, what we last asked, the new message): with a whole transcript it called
-    unrelated floor messages 'the same request'. Its pick counts even when unsure; if Jev is down, the request carries on."""
+    Jev is shown the request, the kind of work it is (its skills), what we last asked, and the new message - not the
+    transcript: with a transcript, or without the kind of work, it took 'Loom 4 did 120 m, order 1, Meena' for an answer
+    to 'which order should Loom 04 run?'. Its pick counts even when unsure; if Jev is down, the request carries on."""
     said = [m_["text"] for m_ in msgs[:-1] if m_["from"] == "user"]
     asked = next((m_["text"] for m_ in reversed(msgs) if m_["from"] == "bot"), "")
-    r = ai.decide({"request_under_way": " / ".join(said), "assistant_last_said": asked, "latest_message": text}, {"turn": (
-        "A mill worker is in the middle of a request with the mill's assistant. Is their latest message part of that request, "
-        "or a new, separate request?", TURN)}, timeout=10)["turn"]
-    return r["choice"] == "new" and r["confidence"] > 0
+    r = ai.decide({"request_under_way": " / ".join(said), "kind_of_work_under_way": [SKILLS[k].desc for k in dict.fromkeys(kinds) if k in SKILLS],
+                   "assistant_last_said": asked, "latest_message": text}, {"turn": (
+        "A mill worker is in the middle of a request with the mill's assistant. Is their latest message part of that request "
+        "(only supplying what was asked, or correcting it), or a new, separate request - different work?", TURN)}, timeout=10)["turn"]
+    if not r["confidence"] and not r["probs"]:
+        return False  # Jev is down: carry on with the request
+    new = r["probs"].get("new", 1.0 if r["choice"] == "new" else 0.0)
+    # A message that reads as a whole request of its own (long, with a quantity or a second action) needs less to count as new:
+    # "Loom 4 la 120 meter, order 1, Meena, 8 hours, loom 2 breakdown" while we wait for "which order should Loom 04 run?"
+    whole = len(text.split()) >= 8 and bool(QUANTITY.search(text) or SECOND_ACTION.search(text))
+    return new >= 0.5 or (whole and new >= 0.3)
 
 
 # ---------- Several things in one message: a chain of steps ----------
+SECOND_ACTION = re.compile(r"(\band\b|\balso\b|\bthen\b|[,;])\s+(also\s+|then\s+)?(mark|make|set|put|assign|issue|log|record|free|"
+                           r"release|start|stop|open|load|close|pass|reject|add|approve|cancel|pay|book|give|take|move)\b", re.I)
+
+
+def looks_several(text):
+    """Code's backstop for Jev's one-or-several answer, which varied between runs on 'loom 4 did 120 m … and mark her
+    present': a second action word after and / also / then. A false alarm only costs a split that returns one step."""
+    return bool(SECOND_ACTION.search(text))
+
+
 STEPS = {"type": "object", "properties": {"steps": {"type": "array", "items": {"type": "string"}}}, "required": ["steps"]}
 
 
@@ -335,24 +372,33 @@ def split(db, u, lines, model):
         "(\"Set Loom 02 to Running\", not \"Set order #5's status\"). Starting or stopping a machine is \"Set <machine> to "
         "Running\" / \"Set <machine> to Idle\".\n- Keep every detail exactly as the person gave it. Add nothing, "
         "leave nothing out. A condition ('if he has other jobs') stays in its step.\n"
-        "- Each step carries every detail it needs from anywhere in the message (machine, order, shift, person): "
-        "'make a roll from it too' becomes 'Make a 90 m roll for order #2 from Loom 01, day shift, Meena'.\n"
+        "- Keep the person's own action: 'loom 4 did 120 m' or 'made 120 m' is output to log (\"Log 120 m on Loom 04 …\"); "
+        "a roll only when they say roll.\n- Each step carries every detail it needs from anywhere in the message (machine, "
+        "order, shift, person): 'and a roll from it too' becomes 'Make a 90 m roll for order #2 from Loom 01, day shift, Meena'.\n"
         "- An action done to several items (two rolls, three POs) is one step per item, except marking several workers "
-        "present, which is one step.\n- If a step uses something an earlier step creates (a new order, truck, roll, PO, buyer…), say 'the new <thing> "
+        "present, which is one step. Never write the same step twice unless the person asked for it twice.\n- If a step uses something an earlier step creates (a new order, truck, roll, PO, buyer…), say 'the new <thing> "
         "from step N'.\n- Questions are steps too. If it is really one thing, return one step.\n\n"
         f"The floor right now:\n{floor_context(db)}\n\nConversation:\n" + "\n".join(lines), STEPS, model,
         os.environ.get("ASSISTANT_REASONING", "low"))  # measured: low thinking = ~2.5 s and steps as good as unlimited (~10-90 s)
     return [s_.strip() for s_ in out.get("steps") or [] if str(s_).strip()][:8]
 
 
-def build(db, u, sk, lines, model, focus=None, refs=None, extra=()):
+class Later(dict):
+    """Names for a step whose details are worked out when it runs (it uses an earlier step's result, so its prepare
+    hasn't run yet): anything prepare would have named reads as a placeholder instead of failing."""
+    def __missing__(self, key):
+        return "(worked out when it runs)"
+
+
+def build(db, u, sk, lines, model, focus=None, refs=None):
     """One request from the conversation -> (draft or None, problems, the model's question)."""
     given, said, question = ({}, {}, "") if not sk.fields else extract(db, u, sk, lines, model, focus, refs)
-    given = grounded(sk, given, said, lines, extra)
+    given = grounded(sk, given, said, lines, floor_context(db) if focus else "")
     values, names, problems = resolve(db, sk, given, refs)
     if problems:
         return None, problems, question
-    return {"skill": sk.name, "values": values, "names": names, "summary": sk.summary(values, names), "said": said}, [], question
+    shown = Later(names) if any(isinstance(x, Ref) for x in values.values()) else names
+    return {"skill": sk.name, "values": values, "names": names, "summary": sk.summary(values, shown), "said": said}, [], question
 
 
 def dumps(d):
@@ -370,13 +416,47 @@ def cap(s_):
 QUANTITY = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(m\b|mtrs?|metres?|meters?|kg|kgs|hrs?|hours?|rs\b|rupees|₹|%)", re.I)
 
 
+def unit_of(u_):
+    u_ = u_.lower()
+    return "m" if u_.startswith("m") else "kg" if u_.startswith("kg") else "h" if u_.startswith("h") else u_ if u_ == "%" else "rs"
+
+
 def unused_quantities(talk, plan):
     """Code's check on a plan: every quantity the person wrote (90 m, 8 hrs, 50 kg) must be in some step. One that isn't
-    means a step was dropped or misread, so the plan is shown, never run straight away."""
-    said = {float(n.replace(",", "")): f"{n}{' ' if u_ not in ('%', '₹') else ''}{u_}"
-            for line in talk if line.startswith("user:") for n, u_ in QUANTITY.findall(line)}
+    means a step was dropped or misread, so the plan is shown, never run straight away. A later message that gives the
+    same kind of quantity ("actually 25 kg") replaces the earlier ones of that kind."""
+    latest = {}  # unit -> quantities from the last message that gave that unit
+    for line in (x for x in talk if x.startswith("user:")):
+        found = {}
+        for n, u_ in QUANTITY.findall(line):
+            found.setdefault(unit_of(u_), {})[float(n.replace(",", ""))] = f"{n}{' ' if u_ not in ('%', '₹') else ''}{u_}"
+        latest.update(found)
     used = {x for d in plan for x in d["values"].values() if isinstance(x, float)}
-    return [txt for n, txt in said.items() if n not in used]
+    return [txt for q in latest.values() for n, txt in q.items() if n not in used]
+
+
+def unsupported(talk, plan):
+    """Steps whose skill needs words the person never used (a roll when they only said 'did 120 m')."""
+    said = " ".join(x for x in talk if x.startswith("user:"))
+    return [f"a {d['skill'].split('_')[-1]} (step {i})" for i, d in enumerate(plan, 1)
+            if SKILLS[d["skill"]].needs and not re.search(SKILLS[d["skill"]].needs, said, re.I)]
+
+
+def other_jobs_only(plan):
+    """'Free Arun from his other jobs' and 'put Arun on Loom 02' in one message: the job on Loom 02 is the one he is going
+    to, so freeing him never touches it (whatever order the steps run in)."""
+    going = {(d["values"].get("operator"), d["values"].get("machine")) for d in plan
+             if d["skill"] in ("change_operator", "assign_job")}
+    for d in plan:
+        if d["skill"] == "release_worker" and not isinstance(d["values"].get("worker"), Ref):
+            keep = {m_ for w_, m_ in going if w_ == d["values"]["worker"]}
+            if keep and d["values"].get("_job_machines"):
+                left = [(j, mc, txt) for j, mc, txt in zip(d["values"]["_jobs"], d["values"]["_job_machines"], d["names"]["_job_list"])
+                        if mc not in keep]
+                d["values"]["_jobs"] = [j for j, _, _ in left]
+                d["names"]["_jobs"] = "; ".join(txt for _, _, txt in left)
+                d["summary"] = SKILLS["release_worker"].summary(d["values"], d["names"])
+    return plan
 
 
 # ---------- Step 4: does the request match the conversation (Jev) ----------
@@ -475,7 +555,8 @@ def turn(db, u, channel, peer, text, run):
 
     skill, level, cols = conv["skill"], conv.get("difficulty"), {}
     choosing = bool(draft and draft.get("choices"))
-    if skill and not choosing and len(text.split()) >= 3 and new_request(state["msgs"], text):
+    kinds = (draft or {}).get("skills") or [skill]  # a plan's skills, or this request's
+    if skill and not choosing and len(text.split()) >= 3 and new_request(state["msgs"], text, kinds):
         finish("(Starting a new request.)", "closed")
         new_conversation(db, u, channel, peer)
         return turn(db, u, channel, peer, text, run)  # handled from scratch, with no trace of the old request
@@ -491,7 +572,7 @@ def turn(db, u, channel, peer, text, run):
         if name is None:
             return finish("Sorry, I can't read messages right now (the AI is unavailable). Please use the app.", "collecting")
         level = x["difficulty"]
-        if x["several"]:  # splitting a message is the hardest part: always the strongest model
+        if x["several"] or looks_several(text):  # splitting a message is the hardest part: always the strongest model
             level = "hard"
             cols = {"difficulty": level, "model": MODELS[level]}
             return plan_turn(db, u, lines(), MODELS[level], run, finish, cols)
@@ -507,7 +588,9 @@ def turn(db, u, channel, peer, text, run):
                               + "\nReply with the number.", "collecting", draft=json.dumps({"choices": top}), **cols)
         skill = name
     elif skill == PLAN:
-        return plan_turn(db, u, lines(), MODELS[level or "hard"], run, finish, {})
+        # Answering our question: keep the steps. Changing a plan that waits for YES: read the whole conversation again.
+        keep_steps = conv["status"] == "collecting" and draft and "steps" in draft
+        return plan_turn(db, u, lines(), MODELS[level or "hard"], run, finish, {}, cached=draft if keep_steps else None)
 
     sk = SKILLS[skill]
     if not may(u, sk):
@@ -528,14 +611,19 @@ def turn(db, u, channel, peer, text, run):
                   skill=skill, draft=dumps(d), jev=p, **cols)
 
 
-def plan_turn(db, u, talk, model, run, finish, cols):
+def plan_turn(db, u, talk, model, run, finish, cols, cached=None):
     """Several things in one message: split into steps, build each one like a single request (a later step may use what
-    an earlier one creates), then Jev checks the whole plan against the conversation."""
-    steps = split(db, u, talk, model)
-    if not steps:
-        return finish(NOT_A_REQUEST, "closed", **cols)
-    with ThreadPoolExecutor(4) as ex:
-        routes = list(ex.map(lambda st: route([f"user: {st}"]), steps))
+    an earlier one creates), then Jev checks the whole plan against the conversation.
+    cached: the steps and their skills from an earlier turn of this plan. A follow-up answer only re-fills the fields,
+    so the steps keep their numbers and nothing is split or routed again."""
+    if cached:
+        steps, routes = cached["steps"], [(n, c_, {}, {}) for n, c_ in zip(cached["skills"], cached["confs"])]
+    else:
+        steps = split(db, u, talk, model)
+        if not steps:
+            return finish(NOT_A_REQUEST, "closed", **cols)
+        with ThreadPoolExecutor(4) as ex:
+            routes = list(ex.map(lambda st: route([f"user: {st}"]), steps))
     if any(r[0] is None for r in routes):
         return finish("Sorry, I can't read messages right now (the AI is unavailable). Please use the app.", "collecting", skill=PLAN, **cols)
     unclear = [f"{i}. \"{st}\"" for i, (st, r) in enumerate(zip(steps, routes), 1) if r[0] not in SKILLS]
@@ -550,30 +638,33 @@ def plan_turn(db, u, talk, model, run, finish, cols):
     def one_step(a):  # each thread gets its own connection: a SQLite connection must not be shared across threads at once
         conn = connect()
         try:
-            return build(conn, u, a[1], talk, MODELS["medium"], focus=a[2], refs=refs(a[0]), extra=steps)  # steps are clear
+            return build(conn, u, a[1], talk, MODELS["medium"], focus=a[2], refs=refs(a[0]))  # steps are clear
         finally:
             conn.close()
     with ThreadPoolExecutor(4) as ex:
         built = list(ex.map(one_step, [(i, sk, st) for i, (sk, st) in enumerate(zip(skills, steps), 1)]))
-    asks = [f"{i}. {st}: " + (q if q and all(p_.startswith('the ') and '(' not in p_ for p_ in pr) else "I need " + "; ".join(pr))
+    def need(pr):  # "I need the yarn; the kg" - prepare's own problems are whole sentences and stand alone
+        parts = [p_ for p_ in pr if not p_[:1].isupper()]
+        return " ".join([p_ for p_ in pr if p_[:1].isupper()] + (["I need " + "; ".join(parts)] if parts else []))
+    asks = [f"{i}. {st}: " + (q if q and all(p_.startswith('the ') and '(' not in p_ for p_ in pr) else need(pr))
             for i, (st, (d, pr, q)) in enumerate(zip(steps, built), 1) if pr]
+    memo = {"steps": steps, "skills": [r[0] for r in routes], "confs": [r[1] for r in routes]}
+    if asks and cached and cached.get("asks") == asks:  # the answer didn't help: the steps or their skills were read wrong
+        return plan_turn(db, u, talk, model, run, finish, cols)
     if asks:
-        return finish("To do all of this I still need:\n" + "\n".join(asks), "collecting", skill=PLAN, draft=None, **cols)
-    plan, seen = [], set()
-    for d, _, _ in built:  # the same step twice (the model repeated itself) runs once
-        key = (d["skill"], dumps(d["values"]))
-        if key not in seen:
-            seen.add(key)
-            plan.append(d)
+        return finish("To do all of this I still need:\n" + "\n".join(asks), "collecting", skill=PLAN, draft=dumps({**memo, "asks": asks}), **cols)
+    plan = other_jobs_only([d for d, _, _ in built])  # repeats are kept: "two 100 m rolls" is two steps on purpose
     summary = "\n".join(f"{i}. {cap(d['summary'])}" for i, d in enumerate(plan, 1))
     writes = [d for d in plan if not SKILLS[d["skill"]].read]
     p = matches(talk, "\n".join(f"{i}. {worded(SKILLS[d['skill']], d['values'], d['said'])}" for i, d in enumerate(plan, 1))) if writes else 1.0
     missing = unused_quantities(talk, plan) if writes else []
-    sure = p is not None and p >= ai.THRESHOLD and all(r[1] >= ai.THRESHOLD for r in routes) and not missing
-    full = {"plan": plan, "summary": summary, "skill": PLAN}
+    unsaid = unsupported(talk, plan)
+    sure = p is not None and p >= ai.THRESHOLD and all(r[1] >= ai.THRESHOLD for r in routes) and not missing and not unsaid
+    full = {"plan": plan, "summary": summary, "skill": PLAN, **memo}
     if sure:
         return run_plan(db, plan, run, finish, p, skill=PLAN, draft=dumps(full), **cols)
-    why = (f"I haven't used {', '.join(missing)} from your message, so please check this before I save it." if missing
+    why = (f"You didn't mention {'; '.join(unsaid)}, so please check this before I save it." if unsaid
+           else f"I haven't used {', '.join(missing)} from your message, so please check this before I save it." if missing
            else "I couldn't double-check this automatically." if p is None else "Please check this before I save it.")
     return finish(f"{why} I'll do this, in order:\n{summary}\nReply YES to save it all, or tell me what to change.", "confirming",
                   skill=PLAN, draft=dumps(full), jev=p, **cols)
@@ -620,6 +711,17 @@ def execute(db, d, run, finish, jev, **cols):
     return finish(reply.strip(), "done", result=json.dumps(resp, default=str)[:4000], **keep)
 
 
+_locks: dict[tuple, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def one_at_a_time(u, channel, peer):
+    """A lock per sender: two quick messages from one person are handled one after the other, so neither overwrites the
+    other's conversation. # ponytail: per process, like the sign-in lockout; a shared lock if the API ever runs as several."""
+    with _locks_guard:
+        return _locks.setdefault((u["id"], channel, peer), threading.Lock())
+
+
 def api_runner(app, authorization):
     """Calls the app's own API in-process, as the person who is chatting. Runs from a request's worker thread."""
     def run(method, path, body):
@@ -641,7 +743,8 @@ class ChatIn(BaseModel):
 
 @router.post("/assistant/chat")
 def chat(body: ChatIn, request: Request, authorization: str = Header(""), db=Depends(get_db), u=Depends(user)):
-    return turn(db, u, "web", "", body.text.strip(), api_runner(request.app, authorization))
+    with one_at_a_time(u, "web", ""):
+        return turn(db, u, "web", "", body.text.strip(), api_runner(request.app, authorization))
 
 
 @router.get("/assistant/chat")
@@ -679,7 +782,8 @@ def whatsapp(body: WhatsAppIn, request: Request, x_bot_secret: str = Header(""),
     if not u:
         return {"reply": "This number isn't linked to a mill account. Ask the office to add it.", "status": "unlinked"}
     u = dict(u)
-    return turn(db, u, "whatsapp", phone, body.text.strip(), api_runner(request.app, "Bearer " + token_for(u, hours=0.1)))
+    with one_at_a_time(u, "whatsapp", phone):
+        return turn(db, u, "whatsapp", phone, body.text.strip(), api_runner(request.app, "Bearer " + token_for(u, hours=0.1)))
 
 
 @router.get("/assistant/conversations")

@@ -384,3 +384,9 @@ body.busy #view{opacity:.6;transition:opacity .12s;pointer-events:none}
 .field select,.inline-actions select,.machine-card select{-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23716b62' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;background-size:12px 8px;padding-right:38px;text-overflow:ellipsis;cursor:pointer}
 .inline-actions select{background-position:right 9px center;padding-right:28px}
 .field select:disabled{cursor:not-allowed;opacity:.6}
+
+/* Owner digest, PO quantity inputs, active filter button */
+.digest-summary{font-size:17px;line-height:1.55;margin:0 0 12px;max-width:70ch}
+#digest .head-actions{flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.po-qty{width:96px;min-height:36px;padding:4px 8px;font:inherit}
+.inline-actions button.active{background:var(--ink,#1d1b18);color:var(--paper,#fff)}

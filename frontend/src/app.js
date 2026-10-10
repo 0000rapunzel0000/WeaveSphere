@@ -1,6 +1,9 @@
 /* Everest Textile Mills · operations frontend.
    All data lives on the mill server (backend/). This file only renders it and sends what people enter.
    API base: window.EVEREST_API if set, else /api (the Vite dev server proxies /api to localhost:8000). */
+import { gsap } from 'gsap';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
+gsap.registerPlugin(ScrollTrigger);
 (()=>{'use strict';
 const API=window.EVEREST_API||'/api';
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
@@ -244,7 +247,7 @@ async function render(){
 function setPage(p){if(!allowed[role].includes(p)){toast('Your role does not have access to '+p+'.');return}page=p;render();window.scrollTo({top:0,behavior:'smooth'})}
 
 // ---------- Kept from the original prototype: landing animation and 3D loom ----------
-function showOpening(){const opening=$('#opening'),tile=$('#videoTile'),reduced=matchMedia('(prefers-reduced-motion: reduce)').matches,zoom=()=>{const r=tile.getBoundingClientRect(),o=opening.getBoundingClientRect(),x=r.left-o.left,y=r.top-o.top;tile.style.position='absolute';tile.style.left=x+'px';tile.style.top=y+'px';tile.style.width=r.width+'px';tile.style.height=r.height+'px';tile.style.transformOrigin='top left';opening.appendChild(tile);if(reduced){opening.classList.add('zoom');tile.style.left='0px';tile.style.top='0px';tile.style.width='100%';tile.style.height='100%';return}requestAnimationFrame(()=>{opening.classList.add('zoom');const sx=opening.clientWidth/r.width,sy=opening.clientHeight/r.height;tile.animate([{transform:'translate3d(0,0,0) scale(1)'},{transform:`translate3d(${-x}px,${-y}px,0) scale(${sx},${sy})`}],{duration:2200,easing:'cubic-bezier(.16,1,.3,1)',fill:'forwards'})})};if(reduced){zoom();return}setTimeout(zoom,4100)}
+function showOpening(){const opening=$('#opening'),tile=$('#videoTile'),reduced=matchMedia('(prefers-reduced-motion: reduce)').matches,zoom=()=>{const r=tile.getBoundingClientRect(),o=opening.getBoundingClientRect(),x=r.left-o.left,y=r.top-o.top;tile.style.position='absolute';tile.style.left=x+'px';tile.style.top=y+'px';tile.style.width=r.width+'px';tile.style.height=r.height+'px';tile.style.transformOrigin='top left';tile.style.willChange='transform';opening.appendChild(tile);if(reduced){opening.classList.add('zoom');tile.style.left='0px';tile.style.top='0px';tile.style.width='100%';tile.style.height='100%';tile.style.willChange='auto';return}requestAnimationFrame(()=>{opening.classList.add('zoom');const sx=opening.clientWidth/r.width,sy=opening.clientHeight/r.height;const animation=tile.animate([{transform:'translate3d(0,0,0) scale(1)'},{transform:`translate3d(${-x}px,${-y}px,0) scale(${sx},${sy})`}],{duration:1050,easing:'cubic-bezier(.2,.8,.2,1)',fill:'forwards'});animation.onfinish=()=>{tile.style.left='0px';tile.style.top='0px';tile.style.width='100%';tile.style.height='100%';tile.style.transform='none';tile.style.willChange='auto';animation.cancel()}})};if(reduced){zoom();return}setTimeout(zoom,4100)}
 function drawLoom(){const c=$('#loomModel');if(!c)return;const ctx=c.getContext('2d'),wrap=c.parentElement,dpr=Math.min(devicePixelRatio||1,2);let w=wrap.clientWidth,h=wrap.clientHeight,drag=false,lastX=0,rotation=-.3,anim=0,raf;const resize=()=>{w=wrap.clientWidth;h=wrap.clientHeight;c.width=w*dpr;c.height=h*dpr;c.style.width=w+'px';c.style.height=h+'px';ctx.setTransform(dpr,0,0,dpr,0,0)};resize();const proj=(x,y,z)=>{let a=rotation,xx=x*Math.cos(a)-z*Math.sin(a),zz=x*Math.sin(a)+z*Math.cos(a),tilt=.58,yy=y*Math.cos(tilt)-zz*Math.sin(tilt),depth=y*Math.sin(tilt)+zz*Math.cos(tilt),scale=1/(1+depth*.0018);return[w/2+xx*scale,h*.47+yy*scale+depth*.17]};function line(a,b,color,width=2){let A=proj(...a),B=proj(...b);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(...A);ctx.lineTo(...B);ctx.stroke()}function frame(){ctx.clearRect(0,0,w,h);ctx.lineCap='round';let L=-125,R=125,Y=-66,Z=-82,F=82;[[L,Y,Z],[R,Y,Z],[L,-Y,Z],[R,-Y,Z],[L,Y,F],[R,Y,F],[L,-Y,F],[R,-Y,F]].forEach(()=>{});const steel='#a9aaab';[[[L,Y,Z],[R,Y,Z]],[[L,-Y,Z],[R,-Y,Z]],[[L,Y,F],[R,Y,F]],[[L,-Y,F],[R,-Y,F]],[[L,Y,Z],[L,-Y,Z]],[[R,Y,Z],[R,-Y,Z]],[[L,Y,F],[L,-Y,F]],[[R,Y,F],[R,-Y,F]],[[L,Y,Z],[L,Y,F]],[[R,Y,Z],[R,Y,F]],[[L,-Y,Z],[L,-Y,F]],[[R,-Y,Z],[R,-Y,F]]].forEach(([a,b])=>line(a,b,steel,3));for(let i=0;i<19;i++){let x=L+10+i*13.1;line([x,0,-55],[x,0,56],i%2?'#d9cec1':'#d49a62',1.4)}for(let j=0;j<10;j++){let z=-48+j*11;line([L+8,-3,z],[R-8,-3,z],j%2?'#bda68f':'#777a7c',2)}const sx=L+20+((anim%2200)/2200)*(R-L-40);line([sx,-8,-74],[sx,-8,75],'#e4f8dc',4);line([L-10,0,-83],[R+10,0,-83],'#737578',7);line([L-10,0,83],[R+10,0,83],'#737578',7);ctx.fillStyle='#9da0a1';ctx.font='9px monospace';ctx.fillText('DRAG TO ROTATE · SHUTTLE IN MOTION',12,h-13);if(!drag)rotation+=.0018;anim+=16;raf=requestAnimationFrame(frame)}frame();wrap.onpointerdown=e=>{drag=true;lastX=e.clientX;wrap.setPointerCapture(e.pointerId)};wrap.onpointermove=e=>{if(drag){rotation+=(e.clientX-lastX)*.008;lastX=e.clientX}};wrap.onpointerup=()=>drag=false;wrap.onpointercancel=()=>drag=false;}
 
 // ---------- Forms ----------
@@ -387,6 +390,119 @@ $('#gate').addEventListener('click',e=>{
  if(e.target.id==='backToStory'){e.preventDefault();$('#gate').classList.add('hidden');$('#landing').classList.remove('hidden');location.hash='story';$('#story').scrollIntoView({behavior:'smooth'})}
 });
 $('#enterWorkspace').addEventListener('click',()=>{$('#landing').classList.add('hidden');$('#gate').classList.remove('hidden');window.scrollTo({top:0,behavior:'smooth'})});
+$('#topLogin').addEventListener('click',()=>$('#enterWorkspace').click());
+
+// Scroll-linked editorial panels: each page rises over the previous one while its
+// content and imagery move with the visitor, so the story feels like a sequence of scenes.
+function initStoryScroll(){
+ initLoomJourney();
+ if(window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+ const panels=gsap.utils.toArray('.story > section');
+ const targetsByPanel=[
+  '.story-intro .eyebrow, .story-intro h2, .story-intro-copy, .story-visual',
+  '.story-flow .section-kicker, .flow-line article',
+  '.capability-heading',
+  '.owner-copy, .owner-chart',
+  '.story-cta > *'
+ ];
+ panels.forEach((panel,index)=>{
+  const targets=panel.querySelectorAll(targetsByPanel[index]||':scope > *');
+  gsap.fromTo(targets,{y:64,autoAlpha:0},{y:0,autoAlpha:1,ease:'none',stagger:.1,scrollTrigger:{trigger:panel,start:'top 92%',end:'top 48%',scrub:.65,invalidateOnRefresh:true}});
+  const image=panel.querySelector('.story-visual img');
+  if(image)gsap.fromTo(image,{yPercent:-14,scale:1.18},{yPercent:14,scale:1.03,ease:'none',scrollTrigger:{trigger:panel,start:'top bottom',end:'bottom top',scrub:true,invalidateOnRefresh:true}});
+  const capabilityCards=panel.querySelectorAll('.capability');
+  capabilityCards.forEach(card=>gsap.fromTo(card,{y:52,autoAlpha:.15},{y:0,autoAlpha:1,ease:'none',scrollTrigger:{trigger:panel,start:'top 88%',end:'top 38%',scrub:.7,invalidateOnRefresh:true}}));
+  const navLink=$$('.story-links a').find(link=>link.getAttribute('href')===`#${panel.id}`);
+  if(navLink)ScrollTrigger.create({trigger:panel,start:'top 44%',onEnter:()=>setActiveStoryLink(navLink),onEnterBack:()=>setActiveStoryLink(navLink)});
+  const trace=panel.querySelector('.owner-chart svg path');
+  if(trace&&trace.getTotalLength){const length=trace.getTotalLength();gsap.set(trace,{strokeDasharray:length,strokeDashoffset:length});gsap.to(trace,{strokeDashoffset:0,ease:'none',scrollTrigger:{trigger:panel,start:'top 78%',end:'top 28%',scrub:true}})}
+ });
+ const progress=$('#storyProgress');
+ if(progress)gsap.to(progress,{scaleX:1,ease:'none',scrollTrigger:{trigger:'.story',start:'top top',end:'bottom bottom',scrub:true}});
+}
+function initLoomJourney(){
+ const canvas=$('#loomStoryCanvas'),journey=$('#loomJourney');
+ if(!canvas||!journey)return;
+ const ctx=canvas.getContext('2d');if(!ctx)return;
+ const state={progress:0,width:0,height:0,dpr:1};
+ const chapterLabels=['YARN LOT · COLOUR · STOCK','WARP · TENSION · PREPARATION','MACHINE · SHIFT · OUTPUT','ROLL ID · INSPECTION · TRACE'];
+ const clamp=(value,min=0,max=1)=>Math.max(min,Math.min(max,value));
+ function resize(){
+  const rect=canvas.getBoundingClientRect();state.dpr=Math.min(window.devicePixelRatio||1,2);state.width=rect.width;state.height=rect.height;
+  canvas.width=Math.round(rect.width*state.dpr);canvas.height=Math.round(rect.height*state.dpr);
+  ctx.setTransform(state.dpr,0,0,state.dpr,0,0);draw();
+ }
+ function draw(){
+  const w=state.width,h=state.height,p=state.progress;if(!w||!h)return;
+  ctx.clearRect(0,0,w,h);
+  const small=w<700,loomLeft=w*(small?.34:.57),loomRight=w*(small?.91:.96),loomTop=h*(small?.14:.19),loomBottom=h*(small?.49:.77),loomW=loomRight-loomLeft;
+  const prep=clamp((p-.08)/.28),weave=clamp((p-.32)/.46),finish=clamp((p-.74)/.26);
+  const ink='#39352e',copper='#a45c3b',gold='#bd865b',thread='#d4a875';
+  // Quiet drafting marks give the moving yarn a sense of scale and direction.
+  ctx.save();ctx.globalAlpha=.16;ctx.strokeStyle='#8f887c';ctx.lineWidth=1;
+  for(let i=0;i<9;i++){const x=loomLeft+i*loomW/8;ctx.beginPath();ctx.moveTo(x,loomTop-18);ctx.lineTo(x,loomTop-8);ctx.stroke()}
+  ctx.restore();
+  // A cone of yarn and its continuous strand.
+  const coneX=w*(small?.20:.51),coneY=h*(small?.34:.58),coneR=Math.min(w*(small?.052:.034),small?26:32);
+  ctx.save();ctx.globalAlpha=1-finish*.38;
+  ctx.fillStyle='#c58c61';ctx.beginPath();ctx.moveTo(coneX-coneR*.65,coneY+coneR*1.55);ctx.lineTo(coneX-coneR*.38,coneY-coneR*.72);ctx.quadraticCurveTo(coneX,coneY-coneR*1.05,coneX+coneR*.38,coneY-coneR*.72);ctx.lineTo(coneX+coneR*.65,coneY+coneR*1.55);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#e5c4a1';ctx.lineWidth=2;
+  for(let i=-3;i<=3;i++){ctx.beginPath();ctx.ellipse(coneX,coneY+i*coneR*.18,coneR*.48,coneR*.11,0,0,Math.PI*2);ctx.stroke()}
+  ctx.fillStyle='#56463a';ctx.beginPath();ctx.ellipse(coneX,coneY+coneR*1.55,coneR*.66,coneR*.13,0,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  // The loom frame assembles as the story moves from raw material to setup.
+  ctx.save();ctx.globalAlpha=.22+prep*.78;ctx.strokeStyle=ink;ctx.lineWidth=Math.max(3,w*.004);ctx.lineCap='round';
+  ctx.strokeRect(loomLeft,loomTop,loomW,loomBottom-loomTop);
+  ctx.lineWidth=Math.max(7,w*.009);ctx.strokeStyle='#8c7258';
+  [loomTop+5,loomBottom-5].forEach(y=>{ctx.beginPath();ctx.moveTo(loomLeft-7,y);ctx.lineTo(loomRight+7,y);ctx.stroke()});
+  ctx.restore();
+  // Fine warp threads become visible one by one, then hold the woven cloth.
+  const warpCount=small?15:27;
+  ctx.save();ctx.globalAlpha=.12+prep*.88;ctx.lineWidth=small?1.2:1.55;
+  for(let i=0;i<warpCount;i++){
+   const x=loomLeft+10+(loomW-20)*i/(warpCount-1),visible=clamp(prep*1.55-i/(warpCount-1)*.18);
+   ctx.globalAlpha=(.12+prep*.8)*visible;ctx.strokeStyle=i%3===0?gold:thread;ctx.beginPath();ctx.moveTo(x,loomTop+12);ctx.bezierCurveTo(x-4,loomTop+(loomBottom-loomTop)*.38,x+4,loomTop+(loomBottom-loomTop)*.64,x,loomBottom-12);ctx.stroke();
+  }
+  ctx.restore();
+  // The shuttle travels back and forth, laying each weft across the warp.
+  const rows=Math.floor(weave*(small?18:28));
+  for(let row=0;row<rows;row++){
+   const y=loomTop+18+(loomBottom-loomTop-36)*(row+1)/(small?19:29),wave=Math.sin(row*.55)*5;
+   ctx.globalAlpha=.35+weave*.6;ctx.strokeStyle=row%2===0?copper:'#d0a16d';ctx.lineWidth=small?2:2.6;ctx.beginPath();ctx.moveTo(loomLeft+11,y);
+   for(let k=1;k<=8;k++){const x=loomLeft+11+(loomW-22)*k/8;ctx.quadraticCurveTo(x-(loomW/16),y+wave*(k%2?1:-1),x,y)}ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  // Yarn path visibly joins the cone to the loom; its bead follows scroll progress.
+  const feed=clamp(p/.38),startX=coneX+coneR*.5,startY=coneY-coneR*.55,endX=loomLeft,endY=loomTop+12;
+  ctx.strokeStyle=copper;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(startX,startY);ctx.bezierCurveTo(startX+w*.08,startY-h*.2,endX-w*.08,endY-h*.12,endX,endY);ctx.stroke();
+  const beadT=feed,beadX=startX+(endX-startX)*beadT,beadY=startY+(endY-startY)*beadT-Math.sin(beadT*Math.PI)*h*.11;
+  ctx.fillStyle='#f8f2e9';ctx.strokeStyle=copper;ctx.lineWidth=2;ctx.beginPath();ctx.arc(beadX,beadY,5,0,Math.PI*2);ctx.fill();ctx.stroke();
+  if(weave>.03){
+   const shuttleT=(weave*8)%1,shuttleX=loomLeft+14+(loomW-28)*(Math.floor(weave*8)%2?1-shuttleT:shuttleT),shuttleY=loomTop+18+(loomBottom-loomTop-36)*clamp(weave);
+   ctx.save();ctx.translate(shuttleX,shuttleY);ctx.fillStyle='#493e33';ctx.strokeStyle='#f1d0a5';ctx.lineWidth=1;ctx.beginPath();ctx.roundRect(small?-18:-26,-7,small?36:52,14,7);ctx.fill();ctx.stroke();ctx.restore();
+  }
+  // The finished length winds into a roll after inspection and traceability appear.
+  if(finish>0){
+   const rollX=loomRight+Math.min(w*.075,82)*finish,rollY=loomTop+(loomBottom-loomTop)*.62,rx=Math.min(w*.048,35),ry=rx*.48;
+   ctx.save();ctx.globalAlpha=finish;ctx.fillStyle='#b77e53';ctx.fillRect(rollX-rx,rollY-ry,rx*2,ry*2);
+   ctx.fillStyle='#e4c19a';ctx.beginPath();ctx.ellipse(rollX+rx,rollY,ry*.52,ry,0,0,Math.PI*2);ctx.fill();
+   ctx.strokeStyle='#754f39';ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(rollX+rx,rollY,ry*.3,ry*.58,0,0,Math.PI*2);ctx.stroke();
+   ctx.restore();
+  }
+  // Stage marker progresses from loose yarn to a complete, traceable roll.
+  const markerY=h*.87,markerX=w*.58,markerW=w*.31;ctx.strokeStyle='#29272230';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(markerX,markerY);ctx.lineTo(markerX+markerW,markerY);ctx.stroke();
+  ctx.fillStyle=copper;ctx.beginPath();ctx.arc(markerX+markerW*p,markerY,4,0,Math.PI*2);ctx.fill();
+  const chapter=Math.min(3,Math.floor(p*4));document.querySelectorAll('.journey-chapter').forEach((el,i)=>el.classList.toggle('active',i===chapter));
+  const counter=$('#journeyCounter'),step=$('#journeyStep');if(counter)counter.textContent=`0${chapter+1} / 04`;if(step)step.textContent=chapterLabels[chapter];
+ }
+ resize();window.addEventListener('resize',resize,{passive:true});
+ if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){state.progress=1;draw();return}
+ gsap.to(state,{progress:1,ease:'none',scrollTrigger:{trigger:journey,start:'top top',end:'bottom bottom',scrub:.45,invalidateOnRefresh:true,onUpdate:draw}});
+}
+function setActiveStoryLink(active){
+ $$('.story-links a').forEach(link=>{const selected=link===active;link.classList.toggle('active',selected);if(selected)link.setAttribute('aria-current','location');else link.removeAttribute('aria-current')});
+}
+initStoryScroll();
 
 // ---------- Start ----------
 (async()=>{

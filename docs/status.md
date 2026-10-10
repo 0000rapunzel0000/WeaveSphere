@@ -21,9 +21,10 @@ The **backend is complete** for every MVP feature in the spec (§3.0–§4). It 
 
 | File | What it is |
 |---|---|
-| [backend/app.py](../backend/app.py) | All endpoints and business rules |
+| [backend/app.py](../backend/app.py) | Assembles the app: CORS, error handlers, the live-floor hook, one router per area |
+| [backend/mill/](../backend/mill/) | One module per business area (orders, inventory, production, …) plus `config`, `db`, `auth` |
 | [backend/db/schema.sql](../backend/db/schema.sql) | 25 tables + 1 view. Strict typing; CHECK, UNIQUE and foreign-key rules enforce the hard rules in the database itself. |
-| [backend/ai.py](../backend/ai.py) | The OpenRouter calls: `decide`, `probability`, `draft_reply`, `read_challan` |
+| [backend/mill/ai.py](../backend/mill/ai.py) | The OpenRouter calls: `decide`, `probability`, `draft_reply`, `read_challan` |
 | [backend/tests/test_app.py](../backend/tests/test_app.py) | Offline test that runs demo steps 1–8 with a fake Jev |
 | [backend/smoke_ai.py](../backend/smoke_ai.py) | Live check against OpenRouter (costs a few cents) |
 | [docs/backend.md](backend.md) | API guide for the frontend team |
@@ -50,7 +51,7 @@ The API docs are at `http://localhost:8000/docs`. On a fresh database, call `POS
 ### 3.0 Platform
 | Feature | | Notes |
 |---|---|---|
-| Role-based login | ✅ | owner / admin / store / supervisor / qc. Bearer-token sessions; passwords hashed with scrypt. The owner can do everything. |
+| Role-based login | ✅ | owner / admin / store / supervisor / qc. Signed JWT (HS256) bearer tokens with expiry and revocable sign-out; passwords hashed with scrypt. The owner can do everything. |
 | Master data | ✅ | One set of create/read/update endpoints for buyers, suppliers, yarn types, fabric types, BOM, machines, workers and shifts. Field names are checked against the database schema. |
 | BOM (kg yarn per metre) | ✅ | One row per fabric type × yarn type |
 | QR generation + scan | ⚠️ | The backend issues a unique code per roll (`ETM-XXXXXXXXXX`) and looks rolls up by it. The QR **image** and the **camera scan** are frontend work. |
@@ -199,9 +200,9 @@ These are marked with `ponytail:` comments in the code. Each one is fine for the
 | Shortcut | Where | Upgrade when |
 |---|---|---|
 | Yarn costed at the moving average, not first-in-first-out | `schema.sql` (yarn stock view) | Yarn lot tracking comes in scope: add an issue → GRN allocation table |
-| Feasibility priority is by order number | `app.py` feasibility | The office needs to put a later order ahead: add a priority column |
-| ETA from the last 7 days of output | `app.py` expected-ready date | Per-stage scheduling is needed |
-| Daily wage per day present | `app.py` wages | Overtime or advances come in scope |
+| Feasibility priority is by order number | `mill/orders.py` feasibility | The office needs to put a later order ahead: add a priority column |
+| ETA from the last 7 days of output | `mill/orders.py` expected-ready date | Per-stage scheduling is needed |
+| Daily wage per day present | `mill/workforce.py` wages | Overtime or advances come in scope |
 | Money stored as rounded decimal numbers | throughout | Audited accounting is needed |
 | Some list endpoints run one query per order | `/orders`, `/floor` | Hundreds of active orders |
 
@@ -209,8 +210,8 @@ These are marked with `ponytail:` comments in the code. Each one is fine for the
 
 - **Frontend:** a camera QR scanner (rolls are scanned with a USB/Bluetooth scanner or typed), passkey and Google sign-in, and partial dispatch
 - **Message delivery:** WhatsApp and email, both incoming and outgoing
-- **Account admin:** user deletion and password reset; sessions never expire
-- **Out of scope per the spec (§8):** purchase orders, yarn lots, partial dispatch, e-way bill, overtime, charts, voice, photo defect detection, audit log, Excel/PDF export
+- **Account admin:** user deletion and password reset
+- **Out of scope per the spec (§8):** yarn lots, e-way bill, overtime, charts, voice, photo defect detection, audit log, Excel/PDF export
 
 ## 7. Next steps
 
@@ -219,3 +220,6 @@ These are marked with `ponytail:` comments in the code. Each one is fine for the
 3. **Decide the threshold:** keep it as a launch setting (`AI_THRESHOLD=0.7`) or change the default in the code.
 4. **Replace the OpenRouter key.** It appeared in plain text in the terminal history.
 5. **Run it:** `python3 seed.py` and `uvicorn app:app` in `backend/`, then `npm run dev` in `frontend/`. Sign in as `owner`.
+
+## Added later: alerts, PO drafts, owner digest
+Defect hotspot alerts, purchase-order drafts (with receiving against approved POs) and the daily owner digest. See [automation.md](automation.md). Yarn reservation for earlier orders was already in `feasibility()`.

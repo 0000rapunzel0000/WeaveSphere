@@ -390,3 +390,6 @@ body.busy #view{opacity:.6;transition:opacity .12s;pointer-events:none}
 #digest .head-actions{flex-wrap:wrap;gap:8px;margin-bottom:6px}
 .po-qty{width:96px;min-height:36px;padding:4px 8px;font:inherit}
 .inline-actions button.active{background:var(--ink,#1d1b18);color:var(--paper,#fff)}
+
+/* Order timeline: seven stages don't fit in a row on a phone; the inline column count must not win there. */
+@media(max-width:560px){.tracking-timeline{grid-template-columns:1fr!important;gap:10px}.timeline-step{text-align:left;display:flex;align-items:center;gap:10px}.timeline-step:before{margin:0}.timeline-step:not(:last-child):after{display:none}}

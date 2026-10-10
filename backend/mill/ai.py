@@ -66,10 +66,10 @@ LANGS = {"en": "English", "ta": "Tamil", "hi": "Hindi"}
 def draft_reply(message: str, order_data: dict, lang: str) -> str:
     return _chat(f"You are the office of Everest Textile Mills. Draft a short, polite WhatsApp reply in {LANGS[lang]} "
                  "to the buyer's message, using ONLY the live order data below (all of this buyer's orders; answer about the "
-                 "order number they mention). If what they ask isn't in the data, say the office will check and reply. "
+                 "order number they mention) and the mill's fabric catalogue. Prices and lead times are quoted by the office. If what they ask isn't in the data, say the office will check and reply. "
                  "Do not invent dates or numbers. "
                  "Reply with the message text only.\n"
-                 f"Buyer message: {message}\nOrder data: {json.dumps(order_data, default=str)}")
+                 f"Buyer message: {message}\nMill data: {json.dumps(order_data, default=str)}")
 
 
 def read_challan(image_b64: str, mime: str) -> dict:
@@ -79,3 +79,11 @@ def read_challan(image_b64: str, mime: str) -> dict:
         "qty_kg": {"type": "number"}, "rate": {"type": "number"}}}
     return _chat([{"type": "text", "text": "Extract the yarn delivery challan fields. Leave a field out if unreadable."},
                   {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}}], schema)
+
+
+def write_digest(facts: dict) -> str:
+    """Words for the owner's morning digest. The caller rejects the text if it contains a number that is not in `facts`."""
+    return _chat("You write the short morning briefing for the owner of Everest Textile Mills. Plain text, under 120 words, "
+                 "no markdown or bullets, most important things first, leave out anything empty. Use ONLY the facts below: "
+                 "never add, round, convert or calculate a number, and do not mention dates.\n"
+                 f"Facts: {json.dumps(facts, default=str)}")

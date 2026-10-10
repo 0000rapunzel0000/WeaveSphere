@@ -7,11 +7,10 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'store', 'supervisor', 'qc'))
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS sessions (
-  token TEXT PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-) STRICT;
+-- Sign-in uses signed JWTs, so there is no session table: just the signing key and signed-out tokens until they expire.
+DROP TABLE IF EXISTS sessions;
+CREATE TABLE IF NOT EXISTS app_secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+CREATE TABLE IF NOT EXISTS revoked_tokens (jti TEXT PRIMARY KEY, expires_at INTEGER NOT NULL) STRICT;
 
 -- Master data
 

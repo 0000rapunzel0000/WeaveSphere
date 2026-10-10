@@ -7,6 +7,7 @@ import sys
 from fastapi.testclient import TestClient
 
 import app
+from mill.config import DB_PATH
 
 PASSWORD = os.environ.get("DEMO_PASSWORD", "everest-demo")
 c = TestClient(app.app)
@@ -21,7 +22,7 @@ def call(method, path, body=None, token=None):
 
 setup = c.post("/auth/setup", json={"username": "owner", "password": PASSWORD})
 if setup.status_code == 403:
-    sys.exit(f"{app.DB_PATH} already has users; seed only runs on an empty database.")
+    sys.exit(f"{DB_PATH} already has users; seed only runs on an empty database.")
 T = setup.json()["token"]
 for user, role in [("admin", "admin"), ("store", "store"), ("floor", "supervisor"), ("qc", "qc")]:
     call("POST", "/users", {"username": user, "password": PASSWORD, "role": role}, T)
@@ -75,6 +76,6 @@ call("POST", "/production", {"shift_id": night, "machine_id": loom4, "order_id":
 rolls = [call("POST", "/rolls", {"order_id": o1, "machine_id": loom4, "shift_id": night, "operator_id": arun, "metres": 200}, T)["qr"]
          for _ in range(3)]
 
-print(f"Seeded {app.DB_PATH}.")
+print(f"Seeded {DB_PATH}.")
 print(f"Accounts: owner, admin, store, floor, qc. Password: {PASSWORD}")
 print(f"Rolls waiting for QC: {', '.join(rolls)}")

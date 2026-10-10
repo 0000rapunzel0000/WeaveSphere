@@ -1,5 +1,6 @@
 fastapi>=0.115
 uvicorn>=0.30
+pyjwt>=2.8
 # tests
 httpx
 pytest

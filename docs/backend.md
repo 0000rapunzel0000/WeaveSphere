@@ -25,14 +25,14 @@ npm run dev                       # http://localhost:5173, proxies /api/* to the
 
 ## Conventions
 
-- **Auth:** `POST /auth/login` returns a `token`. Send it on every request as `Authorization: Bearer <token>`. Only `/auth/*` and `/track/{token}` work without it.
+- **Auth:** `POST /auth/login` returns a `token` (a JWT, HS256; treat it as opaque). Send it on every request as `Authorization: Bearer <token>`. Only `/auth/*` and `/track/{token}` work without it.
 - **Dates:** `YYYY-MM-DD` strings. Months are `YYYY-MM` (for example `?month=2026-10`), and default to the current month.
 - **Units:** money in ₹ (numbers), yarn in kg, fabric in metres.
 - **Errors:** always `{"detail": "..."}`. Show `detail` to the user as is; the messages are written to be shown.
 
 | Code | Meaning |
 |---|---|
-| 401 | Not logged in, bad token, or the session has expired (after `SESSION_HOURS`, default 24). Go to login. |
+| 401 | Not logged in, bad or signed-out token, or the token has expired (after `SESSION_HOURS`, default 24). Go to login. |
 | 429 | Too many failed sign-ins for that username (5 in 15 minutes). The message says how long to wait. |
 | 403 | Your role can't do this. |
 | 404 | Not found (for example a bad QR code). |
@@ -84,8 +84,8 @@ Use `GET /me` after login to get `{id, username, role}` and choose which screens
 | Method | Path | Body | Notes |
 |---|---|---|---|
 | POST | `/auth/setup` | `{username, password}` | Creates the first owner. Works **only once**, on an empty database. Returns the same response as login. |
-| POST | `/auth/login` | `{username, password}` | Returns `{token, role, username}`. Sessions last `SESSION_HOURS` (default 24). Five wrong passwords lock that username for 15 minutes (`429`). |
-| POST | `/auth/logout` | none | Invalidates the token |
+| POST | `/auth/login` | `{username, password}` | Returns `{token, role, username}`. The JWT expires after `SESSION_HOURS` (default 24). Signing key: `JWT_SECRET` (32+ chars) if set, else generated once and kept in the DB. Five wrong passwords lock that username for 15 minutes (`429`). |
+| POST | `/auth/logout` | none | Revokes the token (its id is kept until it would have expired) |
 | GET | `/me` | none | `{id, username, role}` |
 | POST | `/users` | `{username, password (min 8), role}` | Admin or owner. Only an owner can create another owner. |
 | GET | `/users` | none | `[{id, username, role}]` |
@@ -109,7 +109,7 @@ Fields per table (`*` = required):
 | yarn_types | `count*` (for example "40s"), `material*`, `colour*`, `reorder_kg` (default 0, which means no alert) |
 | fabric_types | `name*` (unique), `hsn`, `gst_rate` (default 5, as a percentage) |
 | bom | `fabric_type_id*`, `yarn_type_id*`, `kg_per_m*` (kg of this yarn per metre of fabric) |
-| machines | `name*` (unique), `kind*`, `overhead_per_hour` (₹). You **can't** set `status` here; use the machine status endpoint. |
+| machines | `name*` (unique), `kind*`, `overhead_per_hour` (₹), `rate_m_per_hour` (running speed; 0 = no live output). You **can't** set `status` here; use the machine status endpoint. |
 | workers | `name*`, `phone`, `wage_type*`, `rate*` |
 | shifts | `name*` (unique, for example "Day" or "Night"), `starts`, `ends` (free text such as "06:00") |
 
@@ -180,7 +180,7 @@ Unknown fields return `422`. Duplicates and bad foreign keys return `409`.
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| POST | `/jobs` | `{order_id, machine_id}` | Job card. Assigning a new job closes the machine's previous open job. |
+| POST | `/jobs` | `{order_id, machine_id, operator_id?, shift_id?}` | Job card. Assigning a new job closes the machine's previous open job. |
 | POST | `/jobs/{id}/done` | none | Closes the job |
 | POST | `/machines/{id}/status` | `{status, note?}` | One-tap status. With `Breakdown` + `note`, the AI triages it. Returns `{log, triage}` (see the AI responses section). |
 | GET | `/machines/{id}/log` | none | Status history, including triage fields |
@@ -216,6 +216,17 @@ Unknown fields return `422`. Duplicates and bad foreign keys return `409`.
   "dispatch": { "id", "vehicle_no", "driver", "status" } // or null
 }
 ```
+
+### Live floor
+
+A machine that is **Running** with an open job card and a speed (`rate_m_per_hour` > 0) produces output on its own:
+
+- Every request brings running machines up to date (at most every `ACCRUE_EVERY` seconds, default 2): metres = speed × time since the last update, written to one auto production entry per machine, order, operator, shift and day (`auto: 1`). Progress, wages and machine-hour costs follow.
+- Looms use yarn by the fabric recipe: first the yarn already issued to the order ("yarn at loom"), then store stock, issued automatically at the moving-average rate (issues with no `created_by`).
+- Out of yarn → the machine goes **Idle** and the log says `stopped: out of …`. Stage complete → the job card closes, the machine goes **Idle**, the log says `finished: …`.
+- Output is credited to the job card's operator and shift, else to whoever last ran the machine. Setting **Running** with neither returns `422`.
+- `SIM_SPEED` fast-forwards machine time for demos (60 = one machine-hour per real minute). Default 1. Spinning is not run live (its output is kg).
+- `/floor` machines add: `job_id`, `operator`, `shift`, `running_since`, `stage_done_m`, `qty_m`, `finishes_at` (UTC), `yarn_kg_per_hour`, `yarn_at_loom: [{yarn, kg, store_kg}]`, `last_note`; the response adds `sim_speed`.
 
 ## Quality control
 
@@ -316,3 +327,25 @@ When `auto` is `false`, the fields on the message, log or QC record stay **empty
 | Inbox | `/messages` → `/messages/{id}/draft` → `/messages/{id}/reply`; `/reviews` |
 | Owner dashboard | `/reports/pnl`, `/reports/order-cost`, `/reports/machines`, `/wages`, `/reports/receivables`, `/reports/payables` |
 | Buyer page | `/track/{token}` (no login) |
+
+## Alerts, PO drafts and the owner digest
+See [automation.md](automation.md): `/alerts/defects`, `/reports/defects`, `/purchase-orders`, `/po-lines/{id}`, `/digest/today`. `POST /grn` also takes an optional `po_line_id`; `POST /orders`, `/grn` and `/issues` return `po_refresh`; `POST /qc/{qr}` returns `defect_alerts`.
+
+## Code layout (backend/)
+
+`app.py` only assembles the app. Each business area is one module in `mill/` holding its request models, rules and
+`router`; add an endpoint to the module for its area, and a new area as a new module listed in `app.py`.
+
+| Module | What it owns |
+|---|---|
+| `config` | Settings from the environment and `backend/.env` |
+| `db` | Connections, schema setup (`db/*.sql`), `tx()` write lock, `rows/one/insert` |
+| `auth` | Passwords, JWTs, `user` / `role(...)` dependencies, `/auth/*`, `/users` |
+| `ai` | Every OpenRouter call (Jev and the chat model) |
+| `masters`, `orders`, `inventory`, `production`, `quality`, `dispatch`, `workforce`, `accounts`, `messages` | Their endpoints and rules |
+| `reviews` | Jev decisions with the confidence gate (`decide`) and the review queue |
+| `livefloor` | Running machines produce output and use yarn (called before each request) |
+| `defects`, `purchasing`, `digest` | Alerts, PO drafts and the owner digest (see automation.md) |
+
+Shared rules are imported from the module that owns them (e.g. `from mill.orders import tracking`), never copied.
+

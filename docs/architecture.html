@@ -141,7 +141,7 @@ details.qa .a p{margin:6px 0}
     <!-- backend -->
     <rect class="box hl" x="530" y="40" width="220" height="250" rx="10"/>
     <text class="t" x="546" y="68">Backend · FastAPI</text>
-    <text class="s" x="546" y="88">backend/app.py</text>
+    <text class="s" x="546" y="88">backend/app.py + mill/</text>
     <text class="m" x="546" y="112">bearer auth + role()</text>
     <text class="m" x="546" y="130">pydantic validation</text>
     <text class="m" x="546" y="148">business rules in code</text>
@@ -149,7 +149,7 @@ details.qa .a p{margin:6px 0}
     <text class="m" x="546" y="184">confidence gate + review log</text>
     <text class="m" x="546" y="202">errors → {"detail": text}</text>
     <rect class="box" x="546" y="222" width="188" height="52" rx="8"/>
-    <text class="t" x="560" y="244">ai.py</text>
+    <text class="t" x="560" y="244">mill/ai.py</text>
     <text class="m" x="560" y="262">only file that calls AI</text>
     <!-- db -->
     <rect class="box" x="530" y="330" width="220" height="72" rx="10"/>
@@ -178,9 +178,9 @@ details.qa .a p{margin:6px 0}
   <div class="tablewrap"><table>
     <tr><th>Layer</th><th>Technology</th><th>Files</th><th>Why this choice</th></tr>
     <tr><td>Frontend</td><td>Plain JavaScript, Vite dev server and build</td><td><code>frontend/src/app.js</code>, <code>index.html</code>, <code>app.css</code></td><td>The team's existing prototype; rewired to the API rather than rewritten in a framework.</td></tr>
-    <tr><td>API</td><td>Python 3.12, FastAPI, pydantic</td><td><code>backend/app.py</code></td><td>Typed request validation and free OpenAPI docs at <code>/docs</code>.</td></tr>
+    <tr><td>API</td><td>Python 3.12, FastAPI, pydantic</td><td><code>backend/app.py</code> assembles one router per area in <code>backend/mill/</code></td><td>Typed request validation and free OpenAPI docs at <code>/docs</code>.</td></tr>
     <tr><td>Database</td><td>SQLite in WAL mode, STRICT tables, raw SQL</td><td><code>backend/db/schema.sql</code></td><td>One file, zero ops, real transactions and constraints. Right size for one mill.</td></tr>
-    <tr><td>AI</td><td>OpenRouter: Jev for decisions, a chat model for text and vision</td><td><code>backend/ai.py</code></td><td>One key, one bill, swappable models by setting.</td></tr>
+    <tr><td>AI</td><td>OpenRouter: Jev for decisions, a chat model for text and vision</td><td><code>backend/mill/ai.py</code></td><td>One key, one bill, swappable models by setting.</td></tr>
     <tr><td>Tests</td><td>pytest + FastAPI TestClient; a live AI smoke script</td><td><code>backend/tests/test_app.py</code>, <code>smoke_ai.py</code></td><td>One end-to-end test walks the whole demo; a race test proves the stock lock.</td></tr>
   </table></div>
 </section>
@@ -188,7 +188,7 @@ details.qa .a p{margin:6px 0}
 <section id="request">
   <h2>3. Life of a request</h2>
   <p class="intro">Example: the store keeper issues 200 kg of yarn to an order.</p>
-  <div class="flow"><span>POST /api/issues</span><i>→</i><span>Vite proxy</span><i>→</i><span><code>user()</code> looks up the bearer token in <code>sessions</code></span><i>→</i><span><code>role("admin","store")</code>; owner always passes</span><i>→</i><span>pydantic checks <code>qty_kg &gt; 0</code></span><i>→</i><span><code>get_db()</code>: fresh connection</span><i>→</i><span><code>tx()</code>: BEGIN IMMEDIATE</span><i>→</i><span>read stock + moving-avg rate</span><i>→</i><span>enough? insert issue with rate : 409</span><i>→</i><span>COMMIT</span><i>→</i><span>return issue + low-stock list</span></div>
+  <div class="flow"><span>POST /api/issues</span><i>→</i><span>Vite proxy</span><i>→</i><span><code>user()</code> verifies the JWT, checks it isn't revoked, re-reads the role</span><i>→</i><span><code>role("admin","store")</code>; owner always passes</span><i>→</i><span>pydantic checks <code>qty_kg &gt; 0</code></span><i>→</i><span><code>get_db()</code>: fresh connection</span><i>→</i><span><code>tx()</code>: BEGIN IMMEDIATE</span><i>→</i><span>read stock + moving-avg rate</span><i>→</i><span>enough? insert issue with rate : 409</span><i>→</i><span>COMMIT</span><i>→</i><span>return issue + low-stock list</span></div>
   <div class="grid2">
     <div class="card"><h4>Connections and threads</h4><p>Every endpoint is a plain <code>def</code>, so FastAPI runs it in a worker thread, never on the event loop. Each request gets its own SQLite connection (<code>busy_timeout</code> 5 s) and closes it at the end.</p></div>
     <div class="card"><h4>Transactions</h4><p>Connections run in autocommit. Anything that reads and then writes based on what it read (stock, dispatch scans, QC, review resolution) is wrapped in <code>tx()</code>, which takes SQLite's write lock up front with <code>BEGIN IMMEDIATE</code>.</p></div>
@@ -239,7 +239,7 @@ details.qa .a p{margin:6px 0}
       <path class="arrow" d="M85,280 V298" marker-end="url(#ah2)"/>
     </g>
   </svg>
-  <figcaption>Arrows show how records link and how data moves through the mill. Users, sessions and suppliers are left out for space.</figcaption>
+  <figcaption>Arrows show how records link and how data moves through the mill. Users, auth tables and suppliers are left out for space.</figcaption>
   </figure>
   <h3>Derived, never stored</h3>
   <div class="tablewrap"><table>
@@ -261,7 +261,7 @@ details.qa .a p{margin:6px 0}
   <p class="intro">Full reference with request and response shapes: <code>docs/backend.md</code> and the live <code>/docs</code> page.</p>
   <div class="tablewrap"><table>
     <tr><th>Module</th><th>Endpoints</th><th>Who writes</th><th>Key behaviour</th></tr>
-    <tr><td>Auth</td><td><code>/auth/setup</code> <code>/auth/login</code> <code>/auth/logout</code> <code>/me</code> <code>/users</code></td><td>owner, admin</td><td>Setup works once on an empty DB. scrypt hashes, random session tokens.</td></tr>
+    <tr><td>Auth</td><td><code>/auth/setup</code> <code>/auth/login</code> <code>/auth/logout</code> <code>/me</code> <code>/users</code></td><td>owner, admin</td><td>Setup works once on an empty DB. scrypt hashes, HS256 JWTs.</td></tr>
     <tr><td>Master data</td><td><code>/master/{table}</code> (GET, POST, PUT)</td><td>admin</td><td>One generic endpoint for 8 tables; field names checked against the schema; machine status excluded.</td></tr>
     <tr><td>Orders</td><td><code>/orders</code> <code>/orders/{id}</code> <code>/feasibility</code> <code>/risk</code></td><td>admin</td><td>Yarn need from BOM, derived stage, Jev deadline-risk probability.</td></tr>
     <tr><td>Buyer tracking</td><td><code>/track/{token}</code></td><td>public</td><td>128-bit token per order; shows progress only.</td></tr>
@@ -290,7 +290,7 @@ details.qa .a p{margin:6px 0}
 
 <section id="ai">
   <h2>7. AI layer</h2>
-  <p class="intro">Everything goes through OpenRouter with one key. <code>ai.py</code> is the only file that knows about models.</p>
+  <p class="intro">Everything goes through OpenRouter with one key. <code>mill/ai.py</code> is the only file that knows about models.</p>
   <figure>
   <svg viewBox="0 0 980 250" role="img" aria-label="AI decision flow with confidence gate">
     <rect class="box" x="20" y="90" width="170" height="70" rx="10"/><text class="t" x="36" y="118">Event</text><text class="s" x="36" y="138">3 kinds, see table</text>
@@ -356,7 +356,7 @@ details.qa .a p{margin:6px 0}
   <div class="tablewrap"><table>
     <tr><th>Area</th><th>What is in place</th><th>Gap</th></tr>
     <tr><td>Passwords</td><td>scrypt (n=2¹⁴) with a per-user random salt, constant-time compare</td><td>No reset flow</td></tr>
-    <tr><td>Sessions</td><td>32-byte random bearer tokens in the DB; logout deletes them; expire after 24 h (<code>SESSION_HOURS</code>); 5 failed sign-ins lock a username for 15 min; unknown usernames take as long to reject as wrong passwords</td><td>No password reset</td></tr>
+    <tr><td>Sessions</td><td>HS256 JWTs (<code>sub</code>, <code>role</code>, <code>exp</code>, <code>jti</code>) signed with <code>JWT_SECRET</code> or a key generated once into the DB; only HS256 accepted; expire after 24 h (<code>SESSION_HOURS</code>); logout adds the <code>jti</code> to <code>revoked_tokens</code> until expiry; the role is re-read from <code>users</code> on every request so changes apply at once; 5 failed sign-ins lock a username for 15 min; unknown usernames take as long to reject as wrong passwords</td><td>No password reset</td></tr>
     <tr><td>Authorisation</td><td><code>role()</code> dependency on every write; owner passes everything</td><td>—</td></tr>
     <tr><td>SQL injection</td><td>All values parameterised. Table/column names only from code, or validated against <code>PRAGMA table_info</code></td><td>—</td></tr>
     <tr><td>Buyer links</td><td>128-bit unguessable token per order; shows progress only, no prices or other orders</td><td>Not revocable yet</td></tr>

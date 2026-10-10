@@ -3,14 +3,17 @@ import os
 import tempfile
 
 os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
-os.environ["OPENROUTER_API_KEY"] = ""  # blank, not unset: stops app.py loading the real key from .env
+os.environ["OPENROUTER_API_KEY"] = ""  # blank, not unset: stops mill/config.py loading the real key from .env
 # Pin settings that backend/.env may set for demos, so results never depend on that file.
 os.environ.update(SIM_SPEED="1", AI_THRESHOLD="0.8")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-import ai  # noqa: E402
 import app  # noqa: E402
+from fastapi import HTTPException  # noqa: E402
+
+from mill import ai, auth, inventory, livefloor  # noqa: E402
+from mill.db import connect  # noqa: E402
 
 c = TestClient(app.app)
 
@@ -199,11 +202,20 @@ def test_hardening():
         assert c.post("/auth/login", json={"username": "lock1", "password": "wrong-pass"}).status_code == 401
     assert c.post("/auth/login", json={"username": "lock1", "password": "secret123"}).status_code == 429
     assert c.post("/users", json={"username": "has space", "password": "secret123", "role": "qc"}, headers=h).status_code == 422
-    # Sessions expire.
-    db = app.connect()
-    db.execute("INSERT INTO sessions (token, user_id, created_at) VALUES ('old', 1, datetime('now', '-3 days'))")
-    db.close()
-    assert c.get("/me", headers={"Authorization": "Bearer old"}).status_code == 401
+    # JWTs: expired, forged, unsigned and signed-out tokens are all refused.
+    import time
+    import jwt
+    claims = {"sub": "1", "jti": "t", "exp": int(time.time()) + 60}
+    bearer = lambda t: {"Authorization": "Bearer " + t}  # noqa: E731
+    assert c.get("/me", headers=bearer(jwt.encode({**claims, "exp": int(time.time()) - 1}, auth.jwt_secret()))).status_code == 401
+    assert c.get("/me", headers=bearer(jwt.encode(claims, "x" * 48))).status_code == 401
+    assert c.get("/me", headers=bearer(jwt.encode(claims, None, algorithm="none"))).status_code == 401
+    assert c.get("/me", headers=bearer("garbage")).status_code == 401
+    out = ok(c.post("/auth/login", json={"username": "boss", "password": "secret123"}))["token"]
+    assert ok(c.get("/me", headers=bearer(out)))["username"] == "boss"
+    ok(c.post("/auth/logout", headers=bearer(out)))
+    assert c.get("/me", headers=bearer(out)).status_code == 401
+    assert c.get("/me", headers=h).status_code == 200  # other sign-ins are unaffected
 
     m = lambda t, d: ok(c.post(f"/master/{t}", json=d, headers=h))["id"]  # noqa: E731
     buyer, sup = m("buyers", {"name": "Part Ship"}), m("suppliers", {"name": "Odd Lots"})
@@ -266,11 +278,11 @@ def test_live_floor():
     ok(c.post(f"/machines/{loom}/status", json={"status": "Running"}, headers=h))
 
     def run_for(hours):
-        db = app.connect()
+        db = connect()
         db.execute("UPDATE job_cards SET last_tick = datetime('now', ?) WHERE machine_id = ? AND status = 'open'",
                    (f"-{hours} hours", loom))
         db.close()
-        app._last_accrual = 0
+        livefloor._last_accrual = 0
         return [x for x in ok(c.get("/floor", headers=h))["machines"] if x["id"] == loom][0]
 
     stock = lambda: [y for y in ok(c.get("/stock", headers=h)) if y["id"] == yarn][0]["stock_kg"]  # noqa: E731
@@ -301,14 +313,14 @@ def test_last_yarn_cannot_be_issued_twice():
     import threading
     import time
 
-    db = app.connect()
+    db = connect()
     sid = db.execute("INSERT INTO suppliers (name) VALUES ('race')").lastrowid
     yid = db.execute("INSERT INTO yarn_types (count, material, colour) VALUES ('99s', 'copper', 'x')").lastrowid
     bid = db.execute("INSERT INTO buyers (name) VALUES ('race')").lastrowid
     fid = db.execute("INSERT INTO fabric_types (name) VALUES ('race')").lastrowid
     oids = [db.execute("INSERT INTO orders (buyer_id, fabric_type_id, colour, qty_m, deadline, price_per_m, token) "
                        "VALUES (?, ?, 'x', 1, '2099-01-01', 1, ?)", (bid, fid, f"race{i}")).lastrowid for i in (1, 2)]
-    real_one = app.one
+    real_one = inventory.one
 
     def slow_one(conn, sql, *args):
         r = real_one(conn, sql, *args)
@@ -316,19 +328,19 @@ def test_last_yarn_cannot_be_issued_twice():
             time.sleep(0.05)
         return r
 
-    app.one = slow_one
+    inventory.one = slow_one
     try:
         for _ in range(5):
             db.execute("INSERT INTO grn (supplier_id, yarn_type_id, qty_kg, rate) VALUES (?, ?, 100, 200)", (sid, yid))
             start, results = threading.Barrier(2), []
 
             def issue(order_id):
-                conn = app.connect()
+                conn = connect()
                 start.wait()
                 try:
-                    app.issue_yarn(app.IssueIn(order_id=order_id, yarn_type_id=yid, qty_kg=100), db=conn, u={"id": None})
+                    inventory.issue_yarn(inventory.IssueIn(order_id=order_id, yarn_type_id=yid, qty_kg=100), db=conn, u={"id": None})
                     results.append("ok")
-                except app.HTTPException as e:
+                except HTTPException as e:
                     results.append(e.status_code)
                 finally:
                     conn.close()
@@ -339,7 +351,7 @@ def test_last_yarn_cannot_be_issued_twice():
             assert sorted(results, key=str) == [409, "ok"], results
             assert db.execute("SELECT stock_kg FROM yarn_stock WHERE id = ?", (yid,)).fetchone()[0] == 0
     finally:
-        app.one = real_one
+        inventory.one = real_one
         db.close()
 
 
@@ -349,3 +361,98 @@ if __name__ == "__main__":
     test_live_floor()
     test_last_yarn_cannot_be_issued_twice()
     print("ok")
+
+
+def test_po_drafts_and_defect_alerts():
+    """Shortfall -> draft PO from the cheapest supplier; receiving it clears the need. 5 straight QC fails -> one alert."""
+    h = owner_headers()
+    m = lambda t, d: ok(c.post(f"/master/{t}", json=d, headers=h))["id"]  # noqa: E731
+    buyer, cheap, dear = m("buyers", {"name": "PO buyer"}), m("suppliers", {"name": "Cheap"}), m("suppliers", {"name": "Dear"})
+    yarn = m("yarn_types", {"count": "60s", "material": "silk", "colour": "white", "reorder_kg": 10})
+    fab = m("fabric_types", {"name": "Silk"})
+    m("bom", {"fabric_type_id": fab, "yarn_type_id": yarn, "kg_per_m": 0.5})
+    ok(c.post("/grn", json={"supplier_id": dear, "yarn_type_id": yarn, "qty_kg": 10, "rate": 900}, headers=h))
+    ok(c.post("/grn", json={"supplier_id": cheap, "yarn_type_id": yarn, "qty_kg": 10, "rate": 700}, headers=h))
+    oid = ok(c.post("/orders", json={"buyer_id": buyer, "fabric_type_id": fab, "colour": "white", "qty_m": 100,
+                                     "deadline": "2099-01-01", "price_per_m": 1}, headers=h))["id"]
+    po = [p for p in ok(c.get("/purchase-orders?status=draft", headers=h)) if p["lines"][0]["yarn_type_id"] == yarn][0]
+    line = po["lines"][0]
+    assert po["supplier_id"] == cheap and line["qty_kg"] == 40 and line["rate"] == 700  # 50 needed + 10 reserve - 20 stock
+    grn = {"supplier_id": cheap, "yarn_type_id": yarn, "qty_kg": 40, "rate": 700, "po_line_id": line["id"]}
+    assert c.post("/grn", json=grn, headers=h).status_code == 409  # not approved yet
+    ok(c.post(f"/purchase-orders/{po['id']}/approve", headers=h))
+    assert c.post("/grn", json={**grn, "supplier_id": dear}, headers=h).status_code == 409  # wrong supplier
+    ok(c.post("/grn", json=grn, headers=h))
+    assert ok(c.get(f"/purchase-orders/{po['id']}", headers=h))["status"] == "received"
+    assert not [p for p in ok(c.get("/purchase-orders?status=draft", headers=h)) if p["lines"][0]["yarn_type_id"] == yarn]
+
+    loom, shift = m("machines", {"name": "Loom D", "kind": "weaving"}), m("shifts", {"name": "D shift"})
+    op = m("workers", {"name": "D op", "wage_type": "daily", "rate": 1})
+    roll = lambda: ok(c.post("/rolls", json={"order_id": oid, "machine_id": loom, "shift_id": shift, "operator_id": op,  # noqa: E731
+                                             "metres": 1}, headers=h))["qr"]
+    opened = [ok(c.post(f"/qc/{roll()}", json={"result": "reject", "defect_type": "hole"}, headers=h))["defect_alerts"]
+              for _ in range(5)]
+    assert opened[:4] == [[], [], [], []] and {a["scope"] for a in opened[4]} == {"machine_shift", "operator"}
+    assert "Loom D / D shift: 5 of 5" in opened[4][0]["suggestion"]
+    assert ok(c.post(f"/qc/{roll()}", json={"result": "reject", "defect_type": "hole"}, headers=h))["defect_alerts"] == []  # updated, not reopened
+
+
+def test_audit_fixes():
+    """Bugs found in the audit: each line failed before its fix."""
+    h = owner_headers()
+    m = lambda t, d: ok(c.post(f"/master/{t}", json=d, headers=h))["id"]  # noqa: E731
+    assert c.post("/master/buyers", json={}, headers=h).status_code == 422  # was a 500 (INSERT with no columns)
+
+    # A person-edited PO line plus new demand used to crash every PO refresh (UNIQUE po_id, yarn_type_id).
+    buyer, sup = m("buyers", {"name": "Audit"}), m("suppliers", {"name": "Audit Yarns"})
+    yarn = m("yarn_types", {"count": "2s", "material": "coir", "colour": "brown"})
+    fab = m("fabric_types", {"name": "Coir mat"})
+    m("bom", {"fabric_type_id": fab, "yarn_type_id": yarn, "kg_per_m": 1})
+    ok(c.post("/grn", json={"supplier_id": sup, "yarn_type_id": yarn, "qty_kg": 1, "rate": 10}, headers=h))
+    order = {"buyer_id": buyer, "fabric_type_id": fab, "colour": "brown", "qty_m": 50, "deadline": "2099-01-01", "price_per_m": 1}
+    oid = ok(c.post("/orders", json=order, headers=h))["id"]
+    lines = lambda: [l for p in ok(c.get("/purchase-orders?status=draft", headers=h)) for l in p["lines"]  # noqa: E731
+                     if l["yarn_type_id"] == yarn]
+    ok(c.put(f"/po-lines/{lines()[0]['id']}", json={"qty_kg": 5}, headers=h))
+    assert ok(c.post("/orders", json=order, headers=h))["po_refresh"] is not None
+    assert sorted(l["qty_kg"] for l in lines()) == [5, 94]  # 100 needed - 1 in stock - 5 the person kept, on a new draft
+
+    # Review kinds belong to their team.
+    ok(c.post("/users", json={"username": "qc_audit", "password": "secret123", "role": "qc"}, headers=h))
+    qc = {"Authorization": "Bearer " + ok(c.post("/auth/login", json={"username": "qc_audit", "password": "secret123"}))["token"]}
+    real = ai.decide
+    ai.decide = lambda state, qs: {n: {"choice": next(iter(o)), "probs": {}, "confidence": 0.1} for n, (_, o) in qs.items()}
+    try:
+        rid = ok(c.post("/messages", json={"text": "hi"}, headers=h))["routing"]["review_id"]
+    finally:
+        ai.decide = real
+    assert all(r["kind"] != "message" for r in ok(c.get("/reviews?status=all", headers=qc)))
+    assert c.post(f"/reviews/{rid}", json={"dept": "QC"}, headers=qc).status_code == 403
+
+    # Jev answered the main question but gave nothing valid for urgency: urgency is left empty, not set to "low".
+    real_post = ai._post
+    ai._post = lambda path, body, timeout: {"answers": {"dept": {"choice": "Accounts", "confidence": 0.99},
+                                                        "intent": {"choice": "payment", "confidence": 0.99}}}
+    try:
+        msg = ok(c.post("/messages", json={"text": "invoice?"}, headers=h))["message"]
+    finally:
+        ai._post = real_post
+    assert msg["dept"] == "Accounts" and msg["urgency"] is None
+
+    # Buyer payments go against an invoice and can't exceed what is due.
+    loom, shift = m("machines", {"name": "Loom A", "kind": "weaving"}), m("shifts", {"name": "A shift"})
+    op = m("workers", {"name": "A op", "wage_type": "daily", "rate": 1})
+    qr = ok(c.post("/rolls", json={"order_id": oid, "machine_id": loom, "shift_id": shift, "operator_id": op, "metres": 10},
+                   headers=h))["qr"]
+    ok(c.post(f"/qc/{qr}", json={"result": "pass"}, headers=h))
+    did = ok(c.post("/dispatches", json={"order_id": oid, "vehicle_no": "X", "driver": "Y"}, headers=h))["id"]
+    ok(c.post(f"/dispatches/{did}/scan", json={"qr": qr}, headers=h))
+    inv = ok(c.post(f"/dispatches/{did}/close", headers=h))["invoice"]
+    pay = {"party": "buyer", "party_id": buyer, "amount": inv["total"]}
+    assert c.post("/payments", json=pay, headers=h).status_code == 422
+    assert c.post("/payments", json={**pay, "invoice_id": inv["id"], "amount": inv["total"] + 1}, headers=h).status_code == 422
+    ok(c.post("/payments", json={**pay, "invoice_id": inv["id"]}, headers=h))
+
+    # Business dates are local, not SQLite's UTC CURRENT_DATE.
+    import datetime
+    assert inv["issued_on"] == datetime.date.today().isoformat()

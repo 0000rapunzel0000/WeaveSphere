@@ -8,9 +8,9 @@ import sys
 import tempfile
 import time
 
-os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "smoke.db")  # importing app must not touch mill.db
-import ai  # noqa: E402
-from app import HEADS  # noqa: E402  the exact questions and option descriptions the app sends
+os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "smoke.db")  # importing the app must not touch mill.db
+from mill import ai  # noqa: E402
+from mill.reviews import HEADS  # noqa: E402  the exact questions and option descriptions the app sends
 
 logging.basicConfig(format="   ! %(message)s")
 if not os.environ.get("OPENROUTER_API_KEY", "").startswith("sk-or-v1-"):
@@ -48,4 +48,4 @@ if len(sys.argv) > 1:
     timed("Chat: challan photo", lambda: ai.read_challan(img, "image/png" if sys.argv[1].endswith(".png") else "image/jpeg"))
 
 ok = isinstance(clear, dict) and all(a["confidence"] > 0 for a in clear.values())
-print("\nJev OK" if ok else "\nJev returned nothing usable: check the key, credits, and the request format in ai.py")
+print("\nJev OK" if ok else "\nJev returned nothing usable: check the key, credits, and the request format in mill/ai.py")

@@ -230,3 +230,59 @@ html{scroll-behavior:smooth;scroll-snap-type:none;scroll-padding-top:72px}
  html{scroll-behavior:auto;scroll-snap-type:none}
  .story>section{position:relative;top:auto;min-height:auto;box-shadow:none}
 }
+
+/* Keep the opening message optically centered over the moving film. */
+.opening-copy{left:50%;top:50%;width:min(850px,90vw);margin:0;text-align:center;transform:translate(-50%,-50%)}
+.opening-copy>.eyebrow{justify-content:center}
+.opening-copy h1,.opening-copy p{text-align:center}
+
+/* Scroll scenes rise into place with a little depth, like a sequence of cover pages. */
+@media(min-width:761px){
+ .story>section{will-change:transform}
+ .story-capabilities{perspective:1100px}
+ .capability{transform-origin:50% 100%;will-change:transform,opacity}
+}
+@media(max-width:760px){
+ .opening-copy{width:min(92vw,620px);padding-inline:8px}
+ .opening-copy h1{font-size:clamp(48px,13vw,78px)}
+}
+
+/* A pinned, scroll-driven textile film: the drawing itself is woven by the scroll. */
+.loom-journey{height:390svh;position:relative;margin-inline:calc(-1 * clamp(20px,7vw,112px));background:#e9e4da}
+.loom-journey-stage{height:calc(100svh - 72px);min-height:520px;position:sticky;top:72px;overflow:hidden;background:radial-gradient(ellipse at 72% 44%,#f8f4eb 0,#eee9df 46%,#e7e1d7 100%);color:#282722}
+#loomStoryCanvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.journey-topline,.journey-bottomline{position:absolute;z-index:2;left:clamp(20px,7vw,112px);right:clamp(20px,7vw,112px);display:flex;justify-content:space-between;align-items:center;font:9px var(--mono);letter-spacing:.14em;color:#70695f}
+.journey-topline{top:26px}.journey-topline span:last-child{color:#a45c3b}
+.journey-bottomline{bottom:26px;border-top:1px solid #2927222b;padding-top:13px}
+.journey-chapters{position:absolute;z-index:2;left:clamp(20px,7vw,112px);bottom:clamp(72px,12vh,130px);width:min(36vw,440px);min-width:290px;min-height:300px}
+.journey-chapter{position:absolute;inset:0;opacity:0;visibility:hidden;transform:translate3d(0,30px,0);transition:opacity .45s ease,transform .65s cubic-bezier(.2,.7,.2,1),visibility .45s}
+.journey-chapter.active{opacity:1;visibility:visible;transform:translate3d(0,0,0)}
+.journey-chapter>span{font:9px var(--mono);letter-spacing:.13em;color:#a45c3b}
+.journey-chapter h2{font-size:clamp(54px,8vw,110px);line-height:.83;letter-spacing:-.09em;font-weight:500;margin:22px 0;color:#282722}
+.journey-chapter h2 em{font-style:normal;color:#a45c3b}
+.journey-chapter p{max-width:370px;color:#645f57;font-size:13px;line-height:1.75;margin:22px 0 0}
+.journey-scroll-hint{display:flex;gap:9px;align-items:center}
+.journey-scroll-hint i{width:7px;height:7px;border-right:1px solid #a45c3b;border-bottom:1px solid #a45c3b;transform:rotate(45deg);animation:journeyNudge 1s ease-in-out infinite alternate}
+@keyframes journeyNudge{to{transform:translateY(4px) rotate(45deg)}}
+@media(max-width:760px){
+ .loom-journey{margin-inline:-22px;height:330svh}
+ .loom-journey-stage{height:calc(100svh - 64px);top:64px;min-height:580px}
+ .journey-topline,.journey-bottomline{left:22px;right:22px;font-size:7px}
+ .journey-chapters{left:22px;bottom:72px;width:min(75vw,390px);min-width:0;min-height:245px}
+ .journey-chapter h2{font-size:clamp(52px,14vw,84px)}
+ .journey-chapter p{max-width:310px;font-size:11px}
+}
+@media(max-width:480px){
+ .loom-journey{margin-inline:-17px}
+ .journey-topline,.journey-bottomline{left:17px;right:17px}
+ .journey-chapters{left:17px;bottom:70px;width:min(78vw,340px)}
+ .journey-chapter p{max-width:270px}
+}
+@media(prefers-reduced-motion:reduce){.journey-scroll-hint i{animation:none}}
+
+/* Let content follow the document; only the loom illustration remains scroll-pinned. */
+.story>section{position:relative;top:auto;z-index:auto!important;min-height:0;box-shadow:none;will-change:auto}
+.story-intro,.story-flow,.story-capabilities,.story-owner,.story-cta{min-height:0}
+.story-intro,.story-flow,.story-capabilities,.story-owner,.story-cta{isolation:auto}
+.video-tile{transition:none!important}
+.opening.zoom>.video-tile video{transform:none!important;transition:none!important}

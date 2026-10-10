@@ -5,13 +5,14 @@ This is the reference for building the frontend. The live, clickable schema for 
 ## Running it
 
 ```bash
+cd backend
 pip install -r requirements.txt
 uvicorn app:app --reload          # http://localhost:8000
 ```
 
-- The database is a single SQLite file, `mill.db`. To reset everything, delete it.
-- CORS allows `http://localhost:5173` (the Vite dev server). If your port differs, change `allow_origins` in `app.py`.
-- AI is optional. Set `GEMINI_API_KEY` (and/or `JEV_URL` + `JEV_KEY`) to turn it on. Without AI, every AI decision goes to the human review queue, and the reply-draft and challan-photo endpoints return `503`.
+- The database is a single SQLite file, `backend/mill.db` when run from `backend/`. To reset everything, delete it.
+- CORS allows `http://localhost:5173` (the Vite dev server). To allow other addresses, set `CORS_ORIGINS` to a comma-separated list, for example `CORS_ORIGINS=http://localhost:5173,https://mill.example.com`.
+- AI is optional and runs entirely on OpenRouter. Set `OPENROUTER_API_KEY` to turn it on. Jev (`typesafe/jev-1.13`) makes the decisions, and a chat model (`CHAT_MODEL`, default `google/gemini-2.5-flash`) drafts replies and reads challan photos. Without a key, every AI decision goes to the human review queue, the risk endpoint returns `null`, and the reply-draft and challan-photo endpoints return `503`.
 
 ## Conventions
 
@@ -25,8 +26,8 @@ uvicorn app:app --reload          # http://localhost:8000
 | 401 | Not logged in or bad token. Go to login. |
 | 403 | Your role can't do this. |
 | 404 | Not found (for example a bad QR code). |
-| 409 | A business rule blocked it, such as insufficient stock, a blocked dispatch scan, or a roll not awaiting QC. Also returned for duplicate or invalid references. |
-| 422 | Bad input (missing field, wrong enum value). |
+| 409 | A business rule blocked it, such as insufficient stock, a blocked dispatch scan, a roll not awaiting QC, or a review already resolved. Also returned for a duplicate (`Already exists: …`) or a reference to a record that doesn't exist. |
+| 422 | Bad input (missing field, wrong type, value not allowed). `detail` is one readable line, for example `qty_m: Field required`. |
 | 503 | The AI service is not configured or is down. |
 
 ## Roles
@@ -62,7 +63,7 @@ Use `GET /me` after login to get `{id, username, role}` and choose which screens
 | message dept | `Office` `QC` `Production` `Dispatch` `Accounts` |
 | urgency / severity | `low` `med` `high` |
 | breakdown category | `mechanical` `electrical` `yarn_quality` `operator` |
-| breakdown assignee | `fitter` `electrician` `store` `supervisor` |
+| breakdown assignee | `fitter` `electrician` `store` `supervisor`. Set by rule from the category (mechanical → fitter, electrical → electrician, yarn_quality → store, operator → supervisor), not chosen by the AI. |
 | stage_at_fault | `spinning` `weaving` `dyeing` |
 | reply lang | `en` `ta` `hi` |
 
@@ -122,9 +123,9 @@ Unknown fields return `422`. Duplicates and bad foreign keys return `409`.
   "token": "...", "created_at": "...",
   // tracking fields (same as the public tracking link):
   "order_no": 1, "fabric": "Poplin", "stage": "Weaving",
-  "target_m": 1000, "produced_m": 500, "passed_m": 500,
-  "rolls_produced": 2, "rolls_passed": 1, "progress_pct": 50.0,
-  "expected_ready": "2026-10-20",   // null if there is no recent output
+  "target_m": 1000, "produced_m": 500, "passed_m": 500,  // produced_m includes fabric still on the loom
+  "rolls_produced": 2, "rolls_passed": 1, "progress_pct": 50.0,  // produced_m / target_m
+  "expected_ready": "2026-10-20",   // from the last 7 days of production; null if there was none
   "dispatches": [{ "id", "vehicle_no", "driver", "status", "created_at", "rolls", "metres" }],
   // internal only:
   "tracking_path": "/track/<token>",      // share as <frontend-or-api-host>/track/<token>
@@ -143,7 +144,7 @@ Unknown fields return `422`. Duplicates and bad foreign keys return `409`.
 }
 ```
 
-**Risk:** `{progress_pct, days_left, yarn_short_kg, free_machines, at_risk: bool, probability, confidence}`. This endpoint calls the AI, so call it on demand rather than in list views.
+**Risk:** `{progress_pct, days_left, yarn_short_kg, free_machines, at_risk: bool | null, probability: number | null}`. `null` means the AI is unavailable, so show "unknown". This endpoint calls the AI, so call it on demand rather than in list views.
 
 ## Buyer tracking (public, no login)
 
@@ -259,7 +260,7 @@ Format the invoice number on the frontend, for example `INV-` followed by the ze
 | POST | `/messages/{id}/draft` | `{lang}` | `{draft}`, a reply drafted from live order data. Also saved on the message. |
 | POST | `/messages/{id}/reply` | `{text}` | Marks the message `replied` with the final text. **It does not send anything**; actual WhatsApp or email delivery isn't built. |
 | GET | `/reviews` | none | The human review queue (below) |
-| POST | `/reviews/{id}` | `{field: value, ...}` | A human confirms or corrects the AI's suggestion. Values must come from the enums. A resolved message becomes `routed`. |
+| POST | `/reviews/{id}` | none, or `{field: value, ...}` | **No body accepts the AI's suggestion**; fields you send correct it. Values must come from the enums. Returns `{ok, applied}`. A resolved message becomes `routed`. Returns `409` if the review is already resolved. |
 
 **AI responses** (`routing`, `triage` and `classification` all have this shape):
 ```jsonc
@@ -270,6 +271,8 @@ Format the invoice number on the frontend, for example `INV-` followed by the ze
   "probs": { "intent": { "status": 0.94, ... }, ... }
 }
 ```
+`confidence` is for the main decision: `dept` for messages, `category` for breakdowns, and `defect_type` (or `stage_at_fault` if the inspector chose the defect) for QC. The other fields are hints. A message whose intent comes back `other` always goes to review.
+
 When `auto` is `false`, the fields on the message, log or QC record stay **empty** until someone resolves them in `/reviews`.
 
 **Review queue item:**

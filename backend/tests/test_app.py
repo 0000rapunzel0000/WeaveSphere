@@ -1,10 +1,9 @@
-"""Walks the demo script end to end. Run: pytest -q  (or python test_app.py)"""
+"""Walks the demo script end to end. Run from backend/: python3 -m pytest -q tests"""
 import os
 import tempfile
 
 os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
-for k in ("JEV_URL", "GEMINI_API_KEY"):
-    os.environ.pop(k, None)
+os.environ.pop("OPENROUTER_API_KEY", None)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -39,6 +38,11 @@ def test_demo_flow():
     op = m("workers", {"name": "Operator X", "wage_type": "piece", "rate": 2})
     daily = m("workers", {"name": "Helper", "wage_type": "daily", "rate": 500})
     assert c.post("/master/machines", json={"name": "L5", "kind": "weaving", "status": "Running"}, headers=owner).status_code == 422
+    dup = c.post("/master/machines", json={"name": "Loom 4", "kind": "weaving"}, headers=owner)
+    assert dup.status_code == 409 and dup.json()["detail"].startswith("Already exists")
+    assert c.post("/master/machines", json={"name": "L9", "kind": "knitting"}, headers=owner).status_code == 422
+    missing = c.post("/orders", json={"colour": "red"}, headers=owner)
+    assert missing.status_code == 422 and isinstance(missing.json()["detail"], str)  # always one readable line
     assert c.post("/master/users", json={}, headers=owner).status_code == 404
 
     # 1. Yarn arrives, low-stock alert fires
@@ -62,20 +66,24 @@ def test_demo_flow():
                                    "output": 1000, "hours": 10}, headers=owner))
     ok(c.post("/production", json={"shift_id": night, "machine_id": loom, "order_id": oid, "operator_id": daily,
                                    "output": 0, "hours": 8}, headers=owner))
-    real = ai.classify
-    ai.classify = lambda state, options: {"choice": options[0], "probs": {o: float(o == options[0]) for o in options},
-                                          "confidence": 1.0}
+    real = ai.decide
+    ai.decide = lambda state, qs: {n: {"choice": next(iter(opts)), "probs": {}, "confidence": 1.0}
+                                   for n, (_, opts) in qs.items()}
     try:
         t = ok(c.post(f"/machines/{loom}/status", json={"status": "Breakdown", "note": "yarn keeps snapping"}, headers=owner))
         assert t["triage"]["auto"] and t["log"]["category"] == "mechanical"
+        assert t["log"]["assignee"] == "fitter"  # by rule, not by Jev
         msg = ok(c.post("/messages", json={"text": "where is my order?", "order_id": oid}, headers=owner))
         assert msg["message"]["status"] == "routed" and msg["message"]["intent"] == "status"
     finally:
-        ai.classify = real
+        ai.decide = real
     floor = ok(c.get("/floor", headers=owner))
     assert floor["machines"][0]["order_id"] == oid and floor["machines"][0]["idle"]
     assert floor["machines"][0]["today_output"] == 1000
-    assert ok(c.get(f"/orders/{oid}", headers=owner))["stage"] == "Weaving"
+    o = ok(c.get(f"/orders/{oid}", headers=owner))
+    assert o["stage"] == "Weaving"
+    assert (o["produced_m"], o["progress_pct"], o["rolls_produced"]) == (1000, 100.0, 0)  # loom output counts before rolls
+    assert o["expected_ready"] is not None
 
     # 4. QC: one roll fails, trace shows Loom 4, night shift, operator X; one passes
     roll = lambda: ok(c.post("/rolls", json={"order_id": oid, "machine_id": loom, "shift_id": night,  # noqa: E731
@@ -102,6 +110,10 @@ def test_demo_flow():
     assert c.get("/track/wrong").status_code == 404
     amb = ok(c.post("/messages", json={"text": "hmm", "buyer_id": buyer}, headers=owner))
     assert amb["message"]["status"] == "review"
+    rv = [r for r in ok(c.get("/reviews", headers=owner)) if r["kind"] == "message"][0]
+    assert ok(c.post(f"/reviews/{rv['id']}", headers=owner))["applied"]["dept"] == "Office"  # empty body = accept
+    assert c.post(f"/reviews/{rv['id']}", headers=owner).status_code == 409
+    assert ok(c.get("/messages?status=routed", headers=owner))
 
     # 7. Dispatch: guards, duplicate scan blocked, invoice generated
     other = ok(c.post("/orders", json={"buyer_id": other_buyer, "fabric_type_id": fab, "colour": "red", "qty_m": 10,

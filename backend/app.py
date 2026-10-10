@@ -5,12 +5,12 @@ import math
 import os
 import secrets
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import date, timedelta
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -19,7 +19,8 @@ import ai
 
 DB_PATH = os.environ.get("DB_PATH", "mill.db")
 app = FastAPI(title="Everest Textile Mills")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(","),
+                   allow_methods=["*"], allow_headers=["*"])
 
 
 def connect():
@@ -58,7 +59,21 @@ def tx(db):
 
 @app.exception_handler(sqlite3.IntegrityError)
 def integrity_error(_, e):
-    return JSONResponse({"detail": str(e)}, status_code=409)
+    m = str(e)
+    if m.startswith("UNIQUE"):
+        return JSONResponse({"detail": "Already exists: " + m.split(": ", 1)[-1]}, status_code=409)
+    if m.startswith("FOREIGN KEY"):
+        return JSONResponse({"detail": "It refers to a record that does not exist."}, status_code=409)
+    if m.startswith("NOT NULL"):
+        return JSONResponse({"detail": m.split(": ", 1)[-1] + " is required."}, status_code=422)
+    return JSONResponse({"detail": "Not allowed: " + m}, status_code=422)  # CHECK or wrong type
+
+
+@app.exception_handler(RequestValidationError)
+def bad_input(_, e):
+    """One readable line, so `detail` is always a string."""
+    return JSONResponse({"detail": "; ".join(f"{'.'.join(map(str, x['loc'][1:])) or 'body'}: {x['msg']}"
+                                             for x in e.errors())}, status_code=422)
 
 
 def rows(cur):
@@ -252,26 +267,38 @@ def feasibility(db, o):
     return {"can_start": bool(lines) and short == 0, "short_kg": short, "verdict": verdict, "lines": lines}
 
 
-def expected_ready(db, o, t):
-    remaining = o["qty_m"] - t["passed_m"]
-    if remaining <= 0:
+def stage_output(db, oid):
+    """Metres logged on the furthest fabric stage the order has reached: total, last 7 days, active days."""
+    # ponytail: spinning output is kg so it is skipped; per-stage targets would need a routing plan.
+    r = db.execute("""SELECT SUM(p.output) total,
+          COALESCE(SUM(p.output) FILTER (WHERE p.entry_date >= date('now', '-6 day')), 0) week,
+          COUNT(DISTINCT p.entry_date) FILTER (WHERE p.entry_date >= date('now', '-6 day')) days
+        FROM production_entries p JOIN machines m ON m.id = p.machine_id
+        WHERE p.order_id = ? AND m.kind != 'spinning'
+        GROUP BY m.kind ORDER BY CASE m.kind WHEN 'dyeing' THEN 2 ELSE 1 END DESC LIMIT 1""", (oid,)).fetchone()
+    return dict(r) if r else {"total": 0, "week": 0, "days": 0}
+
+
+def expected_ready(produced, qty, s):
+    if produced >= qty:
         return date.today().isoformat()
-    # ponytail: 7-day run rate of rolls made; swap for a per-stage plan if this proves too naive.
-    rate = db.execute("SELECT COALESCE(SUM(metres), 0) / 7.0 FROM rolls WHERE order_id = ? AND status != 'rejected' "
-                      "AND made_on >= date('now', '-7 day')", (o["id"],)).fetchone()[0]
-    return (date.today() + timedelta(days=math.ceil(remaining / rate))).isoformat() if rate else None
+    # ponytail: run rate per active day over the last week; swap for a per-stage plan if this proves too naive.
+    rate = s["week"] / s["days"] if s["days"] else 0
+    return (date.today() + timedelta(days=math.ceil((qty - produced) / rate))).isoformat() if rate else None
 
 
 def tracking(db, o):
     """What a buyer may see. Also the order context fed to Jev and the reply drafter."""
     t = roll_totals(db, o["id"])
+    s = stage_output(db, o["id"])
+    produced = max(t["produced_m"], s["total"] or 0)  # counts fabric still on the loom, before any roll exists
     fabric = db.execute("SELECT name FROM fabric_types WHERE id = ?", (o["fabric_type_id"],)).fetchone()[0]
     return {
         "order_no": o["id"], "fabric": fabric, "colour": o["colour"], "stage": order_status(db, o, t),
-        "target_m": o["qty_m"], "produced_m": t["produced_m"], "passed_m": t["passed_m"],
+        "target_m": o["qty_m"], "produced_m": produced, "passed_m": t["passed_m"],
         "rolls_produced": t["rolls"], "rolls_passed": t["rolls_passed"],
-        "progress_pct": round(100 * min(t["passed_m"] / o["qty_m"], 1), 1),
-        "deadline": o["deadline"], "expected_ready": expected_ready(db, o, t),
+        "progress_pct": round(100 * min(produced / o["qty_m"], 1), 1),
+        "deadline": o["deadline"], "expected_ready": expected_ready(produced, o["qty_m"], s),
         "dispatches": rows(db.execute("""
             SELECT d.id, d.vehicle_no, d.driver, d.status, d.created_at, COUNT(i.id) rolls, COALESCE(SUM(r.metres), 0) metres
             FROM dispatches d LEFT JOIN dispatch_items i ON i.dispatch_id = d.id LEFT JOIN rolls r ON r.id = i.roll_id
@@ -317,9 +344,10 @@ def order_risk(oid: int, db=Depends(get_db), _=Depends(user)):
              "days_left": (date.fromisoformat(o["deadline"]) - date.today()).days,
              "yarn_short_kg": feasibility(db, o)["short_kg"],
              "free_machines": db.execute("SELECT COUNT(*) FROM machines WHERE status = 'Idle'").fetchone()[0]}
-    r = ai.classify(state, ["yes", "no"])
-    return {**state, "at_risk": r["choice"] == "yes", "probability": round(r["probs"]["yes"], 3),
-            "confidence": round(r["confidence"], 3)}
+    p = ai.probability(state, "Will this order miss its deadline?",
+                       "the order is likely to finish after its deadline", "the order will finish on time")
+    # probability is None when Jev is unavailable; the frontend shows "unknown".
+    return {**state, "at_risk": None if p is None else p >= 0.5, "probability": None if p is None else round(p, 3)}
 
 
 @app.get("/track/{token}")
@@ -412,39 +440,75 @@ def list_issues(order_id: int | None = None, db=Depends(get_db), _=Depends(user)
 
 # ---------- AI decisions + human review queue ----------
 
-LEVELS = ["low", "med", "high"]
-HEADS = {  # kind -> (table, {field: options})
+# Option descriptions are what Jev reads, so they decide how sure it can be. Edit them, not the code.
+HEADS = {  # kind -> (table, {field: (Jev instructions, {option: description})}); first field is the one the gate checks
     "message": ("buyer_messages", {
-        "intent": ["status", "quality_complaint", "payment", "new_order", "delivery_change", "other"],
-        "dept": ["Office", "QC", "Production", "Dispatch", "Accounts"],
-        "urgency": LEVELS}),
+        "dept": ("Which mill department should handle this buyer message?", {
+            "Office": "general enquiries, documents, order confirmations, anything the office can answer",
+            "QC": "complaints about fabric quality, defects, shade, weight or width",
+            "Production": "when goods will be ready, how far an order has progressed in the mill",
+            "Dispatch": "trucks, delivery dates and addresses, missing or delayed shipments",
+            "Accounts": "invoices, payments, dues, GST, credit notes"}),
+        "intent": ("What does the buyer want?", {
+            "status": "asking where an order is or when it will be ready",
+            "quality_complaint": "complaining about defects, colour, weight or quality of fabric received",
+            "payment": "about invoices, payments, dues or GST",
+            "new_order": "wants to place a new order or get a quote",
+            "delivery_change": "wants to change the delivery date, address or quantity",
+            "other": "greetings, acknowledgements, or anything unclear that fits none of the above"}),
+        "urgency": ("How urgently does the mill need to respond?", {
+            "low": "nothing is at stake, it can wait a day",
+            "med": "should be answered today",
+            "high": "the buyer's production, a deadline or money is at risk; answer within the hour"})}),
     "breakdown": ("machine_status_log", {
-        "category": ["mechanical", "electrical", "yarn_quality", "operator"],
-        "severity": LEVELS,
-        "assignee": ["fitter", "electrician", "store", "supervisor"]}),
+        "category": ("What kind of fault caused this machine breakdown?", {
+            "mechanical": "belts, bearings, gears, shuttle or needle damage, jams, worn or broken parts",
+            "electrical": "motor, wiring, power trips, sensors, drives, control panel faults",
+            "yarn_quality": "yarn snapping, slubs, weak or uneven yarn, knots, wrong count",
+            "operator": "set-up or handling mistake, wrong settings, threading error"}),
+        "severity": ("How badly does this breakdown hurt production?", {
+            "low": "the machine can keep running or be fixed in minutes",
+            "med": "the machine is stopped for a few hours",
+            "high": "the machine is stopped for a shift or more, or an order deadline is at risk"})}),
     "defect": ("qc_records", {
-        "defect_type": ["hole", "colour_mismatch", "uneven_weave", "stain", "other"],
-        "severity": LEVELS,
-        "stage_at_fault": ["spinning", "weaving", "dyeing"]}),
+        "defect_type": ("What kind of fabric defect does the inspector describe?", {
+            "hole": "holes, tears, missing threads, broken picks",
+            "colour_mismatch": "shade differs from the approved colour, patchy or uneven dyeing",
+            "uneven_weave": "irregular density or tension, bars, slubs, pattern faults",
+            "stain": "oil, dirt, dye or water marks",
+            "other": "anything that fits none of the above"}),
+        "stage_at_fault": ("Which production stage most likely caused the defect?", {
+            "spinning": "caused while making the yarn (count, twist, slubs)",
+            "weaving": "caused on the loom (holes, tension, broken ends)",
+            "dyeing": "caused in dyeing or finishing (colour, stains, shade)"}),
+        "severity": ("How serious is this defect for the buyer?", {
+            "low": "cosmetic, within normal tolerance",
+            "med": "clearly visible, the buyer may demand a discount or rework",
+            "high": "unsellable, the buyer would reject the roll"})}),
 }
+# Who fixes a breakdown follows from its category: a rule, not an AI call.
+ASSIGNEE_FOR = {"mechanical": "fitter", "electrical": "electrician", "yarn_quality": "store", "operator": "supervisor"}
 
 
 def apply_decision(db, kind, ref_id, fields):
     table = HEADS[kind][0]
+    if kind == "breakdown" and "category" in fields:
+        fields = {**fields, "assignee": ASSIGNEE_FOR[fields["category"]]}
     sets = [f"{k} = ?" for k in fields] + (["status = 'routed'"] if kind == "message" else [])
     db.execute(f"UPDATE {table} SET {', '.join(sets)} WHERE id = ?", (*fields.values(), ref_id))
 
 
 def decide(db, kind, ref_id, state, skip=()):
-    """Confidence gate: auto-apply if every head clears the threshold, else queue for a human."""
-    heads = {f: opts for f, opts in HEADS[kind][1].items() if f not in skip}
-    with ThreadPoolExecutor() as ex:
-        res = dict(zip(heads, ex.map(lambda f: ai.classify({**state, "decide": f}, heads[f]), heads)))
+    """Confidence gate on the primary decision (dept / category / defect); the other fields ride along as hints.
+    A message Jev can only call "other" can't be routed, so a human sees it whatever the confidence."""
+    res = ai.decide(state, {f: q for f, q in HEADS[kind][1].items() if f not in skip})
     choice = {f: r["choice"] for f, r in res.items()}
-    conf = min(r["confidence"] for r in res.values())
-    auto = conf >= ai.THRESHOLD
+    conf = next(iter(res.values()))["confidence"]
+    if kind == "breakdown":
+        choice["assignee"] = ASSIGNEE_FOR[choice["category"]]
+    auto = conf >= ai.THRESHOLD and choice.get("intent") != "other"
     if auto:
-        apply_decision(db, kind, ref_id, choice)
+        apply_decision(db, kind, ref_id, {f: v for f, v in choice.items() if f in res})
     else:
         insert(db, "ai_reviews", {"kind": kind, "ref_id": ref_id, "suggestion": json.dumps(choice), "confidence": conf})
     return {"auto": auto, "confidence": round(conf, 3), "suggestion": choice,
@@ -458,16 +522,23 @@ def review_queue(db=Depends(get_db), _=role("admin", "supervisor", "qc")):
 
 
 @app.post("/reviews/{rid}")
-def resolve_review(rid: int, fields: dict[str, str], db=Depends(get_db), _=role("admin", "supervisor", "qc")):
-    r = one(db, "SELECT * FROM ai_reviews WHERE id = ? AND status = 'open'", rid)
-    allowed = {f: HEADS[r["kind"]][1][f] for f in json.loads(r["suggestion"])}
-    for f, v in fields.items():
-        if v not in allowed.get(f, ()):
-            raise HTTPException(422, f"{f} must be one of {allowed.get(f)}")
+def resolve_review(rid: int, fields: dict[str, str] | None = None, db=Depends(get_db),
+                   _=role("admin", "supervisor", "qc")):
+    """Empty body accepts the AI's suggestion; any fields sent correct it."""
+    r = one(db, "SELECT * FROM ai_reviews WHERE id = ?", rid)
+    if r["status"] != "open":
+        raise HTTPException(409, "This review is already resolved.")
+    allowed = HEADS[r["kind"]][1]
+    for f, v in (fields or {}).items():
+        if f not in allowed:
+            raise HTTPException(422, f"Unknown field '{f}'. Allowed: {', '.join(allowed)}.")
+        if v not in allowed[f][1]:
+            raise HTTPException(422, f"{f} must be one of: {', '.join(allowed[f][1])}.")
+    applied = {f: v for f, v in {**json.loads(r["suggestion"]), **(fields or {})}.items() if f in allowed}
     with tx(db):
-        apply_decision(db, r["kind"], r["ref_id"], fields)
+        apply_decision(db, r["kind"], r["ref_id"], applied)
         db.execute("UPDATE ai_reviews SET status = 'resolved' WHERE id = ?", (rid,))
-    return {"ok": True}
+    return {"ok": True, "applied": applied}
 
 
 # ---------- Production floor ----------

@@ -1,68 +1,77 @@
-"""Jev for decisions, Gemini for words. Never used for numbers."""
+"""Everything goes through OpenRouter: Jev for decisions, a chat model for words. Never used for numbers."""
 import json
 import logging
 import os
 import urllib.request
 
 THRESHOLD = float(os.environ.get("AI_THRESHOLD", "0.8"))
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent"
+JEV_MODEL = os.environ.get("JEV_MODEL", "typesafe/jev-1.13")
+CHAT_MODEL = os.environ.get("CHAT_MODEL", "google/gemini-2.5-flash")  # needs vision for challan photos
 
 
-def _post(url, body, headers, timeout):
-    req = urllib.request.Request(url, json.dumps(body).encode(), {"Content-Type": "application/json", **headers})
+def _post(path, body, timeout):
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY not set")
+    req = urllib.request.Request("https://openrouter.ai/api" + path, json.dumps(body, default=str).encode(),
+                                 {"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)
 
 
-def _gemini(parts, schema=None):
-    key = os.environ.get("GEMINI_API_KEY")
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY not set")
-    cfg = {"responseMimeType": "application/json", "responseSchema": schema} if schema else {}
-    out = _post(GEMINI_URL.format(os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")),
-                {"contents": [{"parts": parts}], "generationConfig": cfg},
-                {"x-goog-api-key": key}, timeout=30)
-    text = out["candidates"][0]["content"]["parts"][0]["text"]
-    return json.loads(text) if schema else text
-
-
-def classify(state: dict, options: list[str]) -> dict:
-    """-> {choice, probs, confidence}. Jev if JEV_URL is set, else Gemini. If both fail,
-    probs come back uniform, so confidence is low and the caller routes to human review."""
-    probs = {}
+def decide(state, questions: dict[str, tuple[str, dict[str, str]]]) -> dict[str, dict]:
+    """Jev choice questions, all in one call: {name: (instructions, {option: description})}
+    -> {name: {choice, probs, confidence}}.
+    If Jev fails, or answers outside the options, confidence is 0 so the caller sends it to human review."""
     try:
-        if os.environ.get("JEV_URL"):
-            # ponytail: assumes Jev answers {"probs": {option: p}}; adapt here once its API is fixed.
-            probs = _post(os.environ["JEV_URL"], {"state": state, "options": options},
-                          {"Authorization": f"Bearer {os.environ.get('JEV_KEY', '')}"}, timeout=2)["probs"]
-        elif os.environ.get("GEMINI_API_KEY"):
-            prompt = ("Classify this textile-mill situation. Give a probability (0 to 1, summing to 1) "
-                      f"for each option.\nState: {json.dumps(state, default=str)}\nOptions: {options}")
-            schema = {"type": "OBJECT", "properties": {o: {"type": "NUMBER"} for o in options}, "required": options}
-            probs = _gemini([{"text": prompt}], schema)
-    except Exception:
-        logging.exception("classify failed, sending to human review")
-    probs = {o: max(0.0, float(probs.get(o) or 0)) for o in options}
-    total = sum(probs.values())
-    probs = {o: p / total if total else 1 / len(options) for o, p in probs.items()}
-    choice = max(probs, key=probs.get)
-    return {"choice": choice, "probs": probs, "confidence": probs[choice]}
+        answers = _post("/alpha/decisions", {"model": JEV_MODEL, "state": state, "questions": {
+            name: {"type": "choice", "instructions": instr, "criteria": opts}
+            for name, (instr, opts) in questions.items()}}, timeout=5)["answers"]
+    except Exception as e:
+        logging.warning("Jev failed, sending to human review: %r", e)
+        answers = {}
+    out = {}
+    for name, (_, opts) in questions.items():
+        a = answers.get(name) or {}
+        ok = a.get("choice") in opts
+        out[name] = {"choice": a["choice"] if ok else next(iter(opts)), "probs": a.get("probabilities", {}),
+                     "confidence": float(a.get("confidence") or 0) if ok else 0.0}
+    return out
+
+
+def probability(state, instructions: str, true: str, false: str) -> float | None:
+    """Jev yes/no question -> probability of `true`, or None if Jev is unavailable."""
+    try:
+        return float(_post("/alpha/decisions", {"model": JEV_MODEL, "state": state, "questions": {
+            "q": {"type": "noul", "instructions": instructions, "criteria": {"true": true, "false": false}}}},
+            timeout=5)["answers"]["q"]["noul"])
+    except Exception as e:
+        logging.warning("Jev failed: %r", e)
+        return None
+
+
+def _chat(content, schema=None):
+    body = {"model": CHAT_MODEL, "messages": [{"role": "user", "content": content}]}
+    if schema:
+        body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
+    text = _post("/v1/chat/completions", body, timeout=60)["choices"][0]["message"]["content"]
+    return json.loads(text) if schema else text.strip()
 
 
 LANGS = {"en": "English", "ta": "Tamil", "hi": "Hindi"}
 
 
 def draft_reply(message: str, order_data: dict, lang: str) -> str:
-    return _gemini([{"text": (
-        f"You are the office of Everest Textile Mills. Draft a short, polite WhatsApp reply in {LANGS[lang]} "
-        "to the buyer's message, using ONLY the live order data below. Do not invent dates or numbers.\n"
-        f"Buyer message: {message}\nOrder data: {json.dumps(order_data, default=str)}")}]).strip()
+    return _chat(f"You are the office of Everest Textile Mills. Draft a short, polite WhatsApp reply in {LANGS[lang]} "
+                 "to the buyer's message, using ONLY the live order data below. Do not invent dates or numbers. "
+                 "Reply with the message text only.\n"
+                 f"Buyer message: {message}\nOrder data: {json.dumps(order_data, default=str)}")
 
 
 def read_challan(image_b64: str, mime: str) -> dict:
-    schema = {"type": "OBJECT", "properties": {
-        "supplier": {"type": "STRING"}, "challan_no": {"type": "STRING"},
-        "yarn_count": {"type": "STRING"}, "material": {"type": "STRING"}, "colour": {"type": "STRING"},
-        "qty_kg": {"type": "NUMBER"}, "rate": {"type": "NUMBER"}}}
-    return _gemini([{"inline_data": {"mime_type": mime, "data": image_b64}},
-                    {"text": "Extract the yarn delivery challan fields. Leave a field out if unreadable."}], schema)
+    schema = {"type": "object", "properties": {
+        "supplier": {"type": "string"}, "challan_no": {"type": "string"},
+        "yarn_count": {"type": "string"}, "material": {"type": "string"}, "colour": {"type": "string"},
+        "qty_kg": {"type": "number"}, "rate": {"type": "number"}}}
+    return _chat([{"type": "text", "text": "Extract the yarn delivery challan fields. Leave a field out if unreadable."},
+                  {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}}], schema)

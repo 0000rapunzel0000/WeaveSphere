@@ -228,3 +228,8 @@ CREATE TABLE IF NOT EXISTS ai_reviews (
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
+
+CREATE INDEX IF NOT EXISTS ix_rolls_order ON rolls (order_id, status);
+CREATE INDEX IF NOT EXISTS ix_production_order ON production_entries (order_id);
+CREATE INDEX IF NOT EXISTS ix_production_machine_date ON production_entries (machine_id, entry_date);
+CREATE INDEX IF NOT EXISTS ix_jobs_order ON job_cards (order_id);

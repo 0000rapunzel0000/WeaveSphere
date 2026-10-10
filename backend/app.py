@@ -32,7 +32,7 @@ def connect():
 
 _db = connect()
 _db.execute("PRAGMA journal_mode = WAL")
-_db.executescript(open(os.path.join(os.path.dirname(__file__), "schema.sql")).read())
+_db.executescript(open(os.path.join(os.path.dirname(__file__), "db", "schema.sql")).read())
 _db.close()
 
 

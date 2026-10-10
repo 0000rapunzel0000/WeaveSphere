@@ -6,4 +6,5 @@ import path from 'node:path';
 // OneDrive may hold as a synced placeholder on Windows.
 export default defineConfig({
   cacheDir: path.join(os.tmpdir(), 'everest-textile-vite-cache'),
+  publicDir: 'public',
 });

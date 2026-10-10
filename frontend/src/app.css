@@ -326,3 +326,61 @@ body.busy #view{opacity:.6;transition:opacity .12s;pointer-events:none}
 @media(max-width:520px){.machine-grid{grid-template-columns:1fr}}
 .top-only{display:none}
 @media(max-width:760px){.top-only{display:inline-flex;align-items:center}.shift-chip{display:none}}
+
+/* ---------- Opening hero: scroll-driven (showOpening), smaller type, room to breathe ---------- */
+.opening-ribbon{animation:none!important;transform:translate(-50%,-50%)!important}
+.opening-copy{transition:none;width:min(760px,88vw);padding-block:56px}
+.opening-copy h1{font-size:clamp(40px,6.2vw,92px);line-height:.98;letter-spacing:-.055em;margin:18px 0 16px}
+.opening-copy p{max-width:540px;margin:0 auto;font-size:14px;line-height:1.6}
+.opening-progress{margin:22px auto 6px}
+.opening-progress i{animation:none}
+.hero-scroll{margin-top:14px}
+.opening-cue{position:absolute;left:50%;bottom:30px;transform:translateX(-50%);z-index:5;display:flex;align-items:center;gap:10px;color:#f4eee7;font:9px var(--mono);letter-spacing:.16em}
+.opening-cue b{display:grid;place-items:center;width:24px;height:24px;border:1px solid #ffffff66;border-radius:50%;font-weight:400;animation:cueBob 1.6s ease-in-out infinite}
+@keyframes cueBob{50%{transform:translateY(4px)}}
+@media(prefers-reduced-motion:reduce){.opening-cue b{animation:none}}
+@media(max-width:760px){.opening-copy h1{font-size:clamp(36px,10vw,56px)}.opening-copy{padding-block:40px}}
+
+/* Sticky story header spans the full width, like the scroll-story section under it */
+.story-nav{margin-inline:calc(-1 * clamp(20px,7vw,112px));padding-inline:clamp(20px,7vw,112px)}
+@media(max-width:480px){.story-nav{margin-inline:-17px;padding-inline:17px}}
+
+/* Live machine cards */
+.live{margin-top:9px}
+.live-bar{height:4px;background:#2927221a;overflow:hidden;margin-bottom:5px}
+.live-bar i{display:block;height:100%;background:#a85f39;transition:width .6s ease}
+.live small{margin-top:3px}
+.speed-chip{padding:7px 10px;border:1px solid #a85f3955;color:#a85f39;font-size:9px}
+.stop-note{color:#a8442f!important;font-weight:600}
+
+/* ---------- Layout rules for the app screens ---------- */
+/* 1. Every text control is the same height, so labels and boxes line up across a form row. */
+.field input:not([type=checkbox]):not([type=file]),.field select{height:44px;min-height:44px;box-sizing:border-box}
+.field input[type=file]{height:auto;min-height:44px;padding:10px;font-size:12px;background:#fffefa;border:1px dashed #2927223a}
+/* 2. Half-width panels get two-column forms and tables that wrap instead of hiding columns. */
+.split .form-grid:not(.two),.dashboard-grid .form-grid:not(.two){grid-template-columns:repeat(2,minmax(0,1fr))}
+.split .table,.dashboard-grid .table{min-width:0}
+.split .table td,.split .table th,.dashboard-grid .table td,.dashboard-grid .table th{padding-inline:9px}
+/* 3. Long or special inputs take a whole row; a button row inside a grid spans it too. */
+.form-grid>.field:has(textarea),.form-grid>.field:has(input[type=file]),.form-grid>.field:has(input[type=checkbox]){grid-column:1/-1}
+.form-grid:not(.two)>.form-actions{grid-column:1/-1}
+.field:has(input[type=checkbox]){flex-direction:row-reverse;justify-content:flex-end;align-items:center;gap:10px}
+/* 4. One consistent gap between stacked blocks on a page. */
+#view>*+*{margin-top:11px}
+#view>.page-head+*,#view>.notice+.page-head{margin-top:0}
+.form-section{margin-bottom:0}
+.panel form+.table-wrap,.panel form+.empty,.panel form+.pick-list,.panel .table-wrap+.notice{margin-top:16px}
+.tracking-card{margin-top:11px}
+/* 5. Two cards in a row meant for three or four: split the row evenly, no empty slot. */
+.grid.three:has(>:nth-child(2):last-child),.grid.four:has(>:nth-child(2):last-child){grid-template-columns:repeat(2,minmax(0,1fr))}
+.grid.four:has(>:nth-child(3):last-child){grid-template-columns:repeat(3,minmax(0,1fr))}
+/* Attendance cards: checkbox and name together on the left. */
+.roll-card{grid-template-columns:auto 1fr;column-gap:10px}
+.roll-card strong{justify-self:start}
+@media(max-width:760px){.split .form-grid:not(.two),.dashboard-grid .form-grid:not(.two){grid-template-columns:1fr}}
+@media(max-width:1100px){.split{grid-template-columns:1fr}}
+@media(max-width:760px){.grid.three>:nth-child(3):last-child,.grid.four>:nth-child(3):last-child{grid-column:1/-1}}
+/* Dropdown arrow: one drawn chevron in every browser (Safari ignores padding on its native arrow). */
+.field select,.inline-actions select,.machine-card select{-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23716b62' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;background-size:12px 8px;padding-right:38px;text-overflow:ellipsis;cursor:pointer}
+.inline-actions select{background-position:right 9px center;padding-right:28px}
+.field select:disabled{cursor:not-allowed;opacity:.6}

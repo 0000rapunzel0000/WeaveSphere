@@ -46,7 +46,7 @@ const ENUM={dept:['Office','QC','Production','Dispatch','Accounts'],intent:['sta
 const REVIEW_FIELDS={message:['dept','intent','urgency'],breakdown:['category','severity'],defect:['defect_type','stage_at_fault','severity']};
 const label=s=>String(s??'').replaceAll('_',' ');
 
-let orderBuyer={},machineOrder={},role='Owner',page='Dashboard',me=null,lang='en',currentOrder='',currentToken='',traceRoll='',pendingRoll='',editMasterId='',masterKey='buyers',reportMonth=thisMonth(),flash='',afterRender=null,renderSeq=0,toastTimer=null;
+let dirty=false,orderBuyer={},machineOrder={},role='Owner',page='Dashboard',me=null,lang='en',currentOrder='',currentToken='',traceRoll='',pendingRoll='',editMasterId='',masterKey='buyers',reportMonth=thisMonth(),flash='',afterRender=null,renderSeq=0,toastTimer=null;
 try{lang=localStorage.getItem('everest-lang')||'en'}catch{}
 
 // ---------- Master data (read by every page for names) ----------
@@ -78,10 +78,23 @@ function lowStockLine(list){return list?.length?`<b>LOW STOCK</b>: ${list.map(y=
 function navRender(){const nav=$('#sideNav');const groups=role==='Buyer'?[['BUYER PORTAL',['Tracking']]]:navGroups;nav.innerHTML=groups.map(([g,items])=>{const vis=items.filter(x=>allowed[role].includes(x));return vis.length?`<div class="nav-label">${g}</div>`+vis.map(n=>`<button class="nav-item ${page===n?'active':''}" data-page="${n}"><span class="nav-icon">${icons[n]}</span>${lang==='ta'?tamil[n]:n}</button>`).join(''):''}).join('');$('#roleName').textContent=(me?.username?me.username+' · ':'')+role.toUpperCase();$('#userChip').textContent=(me?.username?me.username+' · ':'')+role.toUpperCase();$('#pageCrumb').textContent=page.toUpperCase()}
 
 // ---------- Pages ----------
+const localTime=v=>{if(!v)return'';const d=new Date(v.replace(' ','T')+'Z'),same=d.toDateString()===new Date().toDateString();return same?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'})};
+// What a machine is doing right now: stage progress bar, speed, yarn use and at-loom stock, who is on it.
+function liveInfo(m){
+ if(!m.order_id)return (/^finished:/.test(m.last_note||'')?`<small class="stop-note">${esc(m.last_note.toUpperCase())}</small>`:'')+(m.rate_m_per_hour?`<small>${num(m.rate_m_per_hour)} M/H · NO JOB</small>`:'');
+ const pctDone=m.qty_m?Math.min(100,Math.round(100*m.stage_done_m/m.qty_m)):0;
+ let h=`<div class="live"><div class="live-bar" role="progressbar" aria-valuenow="${pctDone}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pctDone}%"></i></div><small>${esc(m.kind).toUpperCase()} ${num(m.stage_done_m)} / ${num(m.qty_m)} M · ${pctDone}%</small>`;
+ if(m.status==='Running'&&m.rate_m_per_hour)h+=`<small>${num(m.rate_m_per_hour)} M/H${m.yarn_kg_per_hour?' · USES '+num(m.yarn_kg_per_hour)+' KG YARN/H':''} · SINCE ${localTime(m.running_since)}${m.finishes_at?' · DONE ~'+localTime(m.finishes_at):''}</small>`;
+ else if(m.status==='Running')h+='<small>SET A SPEED IN MASTERS TO RUN LIVE</small>';
+ if(m.yarn_at_loom.length)h+=`<small>YARN AT LOOM ${m.yarn_at_loom.map(y=>num(y.kg)+' KG').join(' + ')} · STORE ${m.yarn_at_loom.map(y=>num(y.store_kg)+' KG').join(' + ')}</small>`;
+ if(m.operator)h+=`<small>${esc(m.operator)} · ${esc(m.shift)}</small>`;
+ if(m.status!=='Running'&&/^(stopped|finished):/.test(m.last_note||''))h+=`<small class="stop-note">${esc(m.last_note.toUpperCase())}</small>`;
+ return h+'</div>';
+}
 async function dashboard(){
  const [floor,orders,stock,queue]=await Promise.all([api('/floor'),api('/orders'),api('/stock'),api('/qc/queue')]);
  const m=floor.machines,running=m.filter(x=>x.status==='Running').length,out=m.reduce((s,x)=>s+x.today_output,0),low=stock.filter(y=>y.low).length;
- const cards=m.map(x=>`<article class="machine-card"><div class="machine-top"><strong>${esc(x.name)}</strong><span class="status-dot ${x.status==='Breakdown'?'bad':x.idle?'warn':''}"></span></div><small>${esc(x.kind)} · ${x.order_id?'ORDER #'+x.order_id+' · '+x.order_progress_pct+'%':'NO JOB ASSIGNED'}</small><div style="margin-top:9px">${badge(x.status)}</div></article>`).join('');
+ const cards=m.map(x=>`<article class="machine-card"><div class="machine-top"><strong>${esc(x.name)}</strong><span class="status-dot ${x.status==='Breakdown'?'bad':x.idle?'warn':''}"></span></div><small>${esc(x.kind)} · ${x.order_id?'ORDER #'+x.order_id:'NO JOB ASSIGNED'}</small>${liveInfo(x)}<div style="margin-top:9px">${badge(x.status)}</div></article>`).join('');
  const outRows=m.filter(x=>x.today_output).map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.kind)}</td><td>${num(x.today_output)}</td></tr>`);
  return head('Shift overview','FACTORY / LIVE SHIFT',`<button class="secondary" data-page="Production">OPEN FLOOR ↗</button>`)+
   `<div class="grid four">${kpi('TODAY’S OUTPUT',num(out)+' m','PRODUCTION ENTRIES')}${kpi('MACHINES RUNNING',`${running} / ${m.length}`,`${floor.idle_count} NOT RUNNING · ${m.filter(x=>x.status==='Breakdown').length} BREAKDOWN`)}${kpi('ORDERS IN PROGRESS',orders.filter(o=>!['Pending','Ready','Dispatched'].includes(o.stage)).length,'LIVE ORDER BOOK')}${kpi('QC QUEUE',queue.length,`${low} LOW STOCK ALERTS`,low?'warn':'')}</div>`+
@@ -113,21 +126,21 @@ async function inventoryPage(){
  const yarnChoices=choices(M.yarn_types,yarnName),openOrders=orderChoices(orders.filter(o=>o.stage!=='Dispatched'));
  const stockRows=stock.map(y=>`<tr><td>${esc(y.count)} ${esc(y.material)}</td><td>${esc(y.colour)}</td><td>${num(y.stock_kg)} kg</td><td>${num(y.reorder_kg)} kg</td><td>${badge(y.low?'Low stock':y.reorder_kg&&y.stock_kg<y.reorder_kg*1.3?'Watch':'In range')}</td><td>${y.avg_rate==null?'—':money(y.avg_rate)+'/kg'}</td></tr>`);
  const grnRows=grns.map(g=>`<tr><td class="mono-cell">GRN-${g.id}</td><td>${esc(g.supplier)}</td><td>${esc(yarnName(byId(M.yarn_types,g.yarn_type_id)))}<span class="sub">CHALLAN ${esc(g.challan_no||'—')}</span></td><td>${num(g.qty_kg)} kg</td><td>${money(g.rate)}/kg</td><td>${esc(g.received_on)}</td></tr>`);
- const issueRows=issues.map(i=>`<tr><td>${esc(i.issued_on)}</td><td class="mono-cell">#${i.order_id}</td><td>${esc(yarnName(byId(M.yarn_types,i.yarn_type_id)))}</td><td>${esc(nameOf(M.machines,i.machine_id))}</td><td>${num(i.qty_kg)} kg</td></tr>`);
+ const issueRows=issues.map(i=>`<tr><td>${esc(i.issued_on)}</td><td class="mono-cell">#${i.order_id}</td><td>${esc(yarnName(byId(M.yarn_types,i.yarn_type_id)))}</td><td>${esc(nameOf(M.machines,i.machine_id))}</td><td>${num(i.qty_kg)} kg</td><td>${i.created_by?'Store':'Loom, live'}</td></tr>`);
  const grnFields=select('SUPPLIER','supplier_id',choices(M.suppliers))+select('YARN TYPE','yarn_type_id',yarnChoices)+field('QUANTITY (KG)','qty_kg','','number')+field('RATE / KG (₹)','rate','','number')+field('CHALLAN NUMBER','challan_no','Supplier challan','text','',false)+select('LINK ORDER (OPTIONAL)','order_id',optional(openOrders,'No linked order'),'',false)+`<label class="field"><span>CHALLAN PHOTO → FILL THE FORM</span><input type="file" name="challan_photo" accept="image/*" data-challan></label>`;
  const issueFields=select('YARN TYPE','yarn_type_id',yarnChoices)+select('ORDER','order_id',openOrders)+select('MACHINE (OPTIONAL)','machine_id',optional(choices(M.machines)),'',false)+field('QUANTITY (KG)','qty_kg','','number');
- return head('Yarn at the gate','RAW MATERIAL INVENTORY')+'<div class="grid three">'+kpi('YARN TYPES',stock.length,'MASTER RECORDS')+kpi('GRNS',grns.length,'RECEIPTS LOGGED')+kpi('LOW STOCK',stock.filter(y=>y.low).length,'REORDER ALERTS')+'</div><div class="split" style="margin-top:11px">'+formStart('grn','Goods receipt note',grnFields,'RECORD GRN')+formStart('issue','Issue yarn to production',issueFields,'ISSUE MATERIAL')+'</div>'+panel('Live yarn stock',table(['YARN','COLOUR','AVAILABLE','REORDER LEVEL','ALERT','AVG RATE'],stockRows,'Add yarn types in Masters.'),'GRN − ISSUES = ON HAND')+'<div class="split">'+panel('Material issues',table(['DATE','ORDER','YARN','MACHINE','QTY'],issueRows,'No yarn issued yet.'),'STOCK DEDUCTIONS')+panel('Goods receipt history',table(['GRN','SUPPLIER','YARN / CHALLAN','QUANTITY','RATE','DATE'],grnRows,'No receipts yet.'),'RECEIVING LOG')+'</div>';
+ return head('Yarn at the gate','RAW MATERIAL INVENTORY')+'<div class="grid three">'+kpi('YARN TYPES',stock.length,'MASTER RECORDS')+kpi('GRNS',grns.length,'RECEIPTS LOGGED')+kpi('LOW STOCK',stock.filter(y=>y.low).length,'REORDER ALERTS')+'</div><div class="split" style="margin-top:11px">'+formStart('grn','Goods receipt note',grnFields,'RECORD GRN')+formStart('issue','Issue yarn to production',issueFields,'ISSUE MATERIAL')+'</div>'+panel('Live yarn stock',table(['YARN','COLOUR','AVAILABLE','REORDER LEVEL','ALERT','AVG RATE'],stockRows,'Add yarn types in Masters.'),'GRN − ISSUES = ON HAND')+'<div class="split">'+panel('Material issues',table(['DATE','ORDER','YARN','MACHINE','QTY','SOURCE'],issueRows,'No yarn issued yet.'),'STOCK DEDUCTIONS')+panel('Goods receipt history',table(['GRN','SUPPLIER','YARN / CHALLAN','QUANTITY','RATE','DATE'],grnRows,'No receipts yet.'),'RECEIVING LOG')+'</div>';
 }
 
 async function productionPage(){
  const [floor,orders,entries]=await Promise.all([api('/floor'),api('/orders'),api('/production')]);
  machineOrder=Object.fromEntries(floor.machines.filter(m=>m.order_id).map(m=>[m.id,m.order_id]));
  const openOrders=orderChoices(orders.filter(o=>!['Ready','Dispatched'].includes(o.stage)));
- const cards=floor.machines.map(m=>`<article class="machine-card"><div class="machine-top"><strong>${esc(m.name)}</strong><span class="status-dot ${m.status==='Breakdown'?'bad':m.idle?'warn':''}"></span></div><small>${esc(m.kind)} · ${m.order_id?'ORDER #'+m.order_id+' · '+m.order_progress_pct+'%':'NO ORDER'} · TODAY ${num(m.today_output)}</small><label class="field" style="margin-top:10px"><span>ONE-TAP STATUS</span><select data-machine-status="${m.id}">${['Running','Idle','Breakdown','Maintenance'].map(s=>`<option ${s===m.status?'selected':''}>${s}</option>`).join('')}</select></label><label class="field" style="margin-top:6px"><span>ASSIGN ORDER</span><select data-machine-order="${m.id}"><option value="">${m.order_id?'#'+m.order_id+' (current)':'Choose an order…'}</option>${openOrders.filter(([id])=>id!==m.order_id).map(([v,t])=>`<option value="${v}">${esc(t)}</option>`).join('')}</select></label></article>`).join('');
+ const cards=floor.machines.map(m=>`<article class="machine-card"><div class="machine-top"><strong>${esc(m.name)}</strong><span class="status-dot ${m.status==='Breakdown'?'bad':m.idle?'warn':''}"></span></div><small>${esc(m.kind)} · ${m.order_id?'ORDER #'+m.order_id:'NO ORDER'} · TODAY ${num(m.today_output)}</small>${liveInfo(m)}<label class="field" style="margin-top:10px"><span>ONE-TAP STATUS</span><select data-machine-status="${m.id}">${['Running','Idle','Breakdown','Maintenance'].map(s=>`<option ${s===m.status?'selected':''}>${s}</option>`).join('')}</select></label><label class="field" style="margin-top:6px"><span>ASSIGN ORDER</span><select data-machine-order="${m.id}"><option value="">${m.order_id?'#'+m.order_id+' (current)':'Choose an order…'}</option>${openOrders.filter(([id])=>id!==m.order_id).map(([v,t])=>`<option value="${v}">${esc(t)}</option>`).join('')}</select></label></article>`).join('');
  const people=select('MACHINE','machine_id',choices(M.machines,m=>`${m.name} · ${m.kind}`))+select('ORDER','order_id',openOrders)+select('OPERATOR','operator_id',choices(M.workers))+select('SHIFT','shift_id',choices(M.shifts));
  const outputFields=people+field('OUTPUT (M, OR KG ON SPINNING)','output','','number')+field('MACHINE HOURS','hours','','number','8',false)+`<label class="field"><span>ALSO CREATE A ROLL WITH THIS OUTPUT</span><input type="checkbox" name="make_roll"></label>`;
  const shiftRows=entries.map(p=>`<tr><td>${esc(p.entry_date)}</td><td>${esc(p.machine)}</td><td class="mono-cell">#${p.order_id}</td><td>${esc(p.operator)}</td><td>${esc(p.shift)}</td><td>${num(p.output)}</td><td>${num(p.hours)}</td></tr>`);
- return head('Production floor','MACHINES / JOB CARDS')+'<div class="grid three">'+kpi('RUNNING',floor.machines.filter(m=>m.status==='Running').length,'MACHINES ON JOB')+kpi('NOT RUNNING',floor.idle_count,'IDLE / DOWN / MAINTENANCE')+kpi('TODAY’S OUTPUT',num(floor.machines.reduce((s,m)=>s+m.today_output,0)),'SHIFT ENTRIES')+'</div>'+panel('Machine status board',`<div class="machine-grid">${cards||'<div class="empty">Add machines in Masters.</div>'}</div>`,'A BREAKDOWN NOTE GOES TO JEV FOR TRIAGE')+'<div class="split">'+formStart('job','Assign order to machine (job card)',select('ORDER','order_id',openOrders)+select('MACHINE','machine_id',choices(M.machines,m=>`${m.name} · ${m.kind}`)),'ASSIGN JOB CARD','STAGE = MACHINE KIND')+formStart('breakdown','Breakdown log',select('MACHINE','machine_id',choices(M.machines))+textarea('WHAT HAPPENED?','note','e.g. yarn keeps snapping on the warp',true),'LOG & TRIAGE','JEV · CATEGORY / SEVERITY')+'</div>'+formStart('production','Production entry · per shift',outputFields,'RECORD SHIFT OUTPUT')+panel('Shift entries',table(['DATE','MACHINE','ORDER','OPERATOR','SHIFT','OUTPUT','HOURS'],shiftRows,'Production output will appear here.'),'LATEST 200');
+ return head('Production floor','MACHINES / JOB CARDS',floor.sim_speed!==1?`<span class="mono speed-chip">DEMO SPEED ×${num(floor.sim_speed)}</span>`:'')+'<div class="grid three">'+kpi('RUNNING',floor.machines.filter(m=>m.status==='Running').length,'MACHINES ON JOB')+kpi('NOT RUNNING',floor.idle_count,'IDLE / DOWN / MAINTENANCE')+kpi('TODAY’S OUTPUT',num(floor.machines.reduce((s,m)=>s+m.today_output,0)),'SHIFT ENTRIES')+'</div>'+panel('Machine status board',`<div class="machine-grid">${cards||'<div class="empty">Add machines in Masters.</div>'}</div>`,'A BREAKDOWN NOTE GOES TO JEV FOR TRIAGE')+'<div class="split">'+formStart('job','Assign order to machine (job card)',select('ORDER','order_id',openOrders)+select('MACHINE','machine_id',choices(M.machines,m=>`${m.name} · ${m.kind}${m.rate_m_per_hour?' · '+num(m.rate_m_per_hour)+' m/h':''}`))+select('OPERATOR','operator_id',optional(choices(M.workers),'Last operator on this machine'),'',false)+select('SHIFT','shift_id',optional(choices(M.shifts),'Last shift on this machine'),'',false),'ASSIGN JOB CARD','RUNNING MACHINES PRODUCE AT THEIR SPEED')+formStart('breakdown','Breakdown log',select('MACHINE','machine_id',choices(M.machines))+textarea('WHAT HAPPENED?','note','e.g. yarn keeps snapping on the warp',true),'LOG & TRIAGE','JEV · CATEGORY / SEVERITY')+'</div>'+formStart('production','Production entry · per shift',outputFields,'RECORD SHIFT OUTPUT')+panel('Shift entries',table(['DATE','MACHINE','ORDER','OPERATOR','SHIFT','OUTPUT','HOURS'],shiftRows,'Production output will appear here.'),'LATEST 200');
 }
 
 async function qualityPage(){
@@ -162,7 +175,7 @@ async function dispatchPage(){
 function renderTracking(t,link=''){
  const idx=Math.max(0,STAGES.indexOf(t.stage));
  const disp=t.dispatches.map(d=>`${esc(d.created_at)} · ${esc(d.vehicle_no)} · ${d.rolls} rolls · ${num(d.metres)} m (${esc(d.status)})`).join(' / ')||'Not dispatched yet.';
- return`<section class="panel tracking-card"><div class="panel-head"><div><span class="mono">ORDER #${t.order_no}</span><h2 style="margin:8px 0">${esc(t.fabric)} · ${esc(t.colour)}</h2></div>${badge(t.stage)}</div><div class="tracking-timeline" style="grid-template-columns:repeat(${STAGES.length},1fr)">${STAGES.map((x,i)=>`<div class="timeline-step ${i<=idx?'done':''}">${x.toUpperCase()}</div>`).join('')}</div><div class="grid three">${kpi('PRODUCED',num(t.produced_m)+' m',`TARGET ${num(t.target_m)} m · ${t.progress_pct}%`)}${kpi('PASSED QC',num(t.passed_m)+' m',`${t.rolls_passed} OF ${t.rolls_produced} ROLLS`)}${kpi('EXPECTED READY',esc(t.expected_ready||'Not enough data yet'),'DEADLINE '+esc(t.deadline))}</div><p class="help">Dispatch: ${disp}</p>${link?`<div class="form-actions"><button class="secondary" data-act="order-link" data-token="${esc(link)}">COPY SHARE LINK</button></div>`:''}</section>`;
+ return`<section class="panel tracking-card"><div class="panel-head"><div><span class="mono">ORDER #${t.order_no}</span><h2 style="margin:8px 0">${esc(t.fabric)} · ${esc(t.colour)}</h2></div>${badge(t.stage)}</div><div class="tracking-timeline" style="grid-template-columns:repeat(${STAGES.length},1fr)">${STAGES.map((x,i)=>`<div class="timeline-step ${i<=idx?'done':''}">${x.toUpperCase()}</div>`).join('')}</div><div class="grid three">${kpi('PRODUCED',num(t.produced_m)+' m',`TARGET ${num(t.target_m)} m · ${t.progress_pct}%`)}${kpi('PASSED QC',num(t.passed_m)+' m',`${t.rolls_passed} OF ${t.rolls_produced} ROLLS`)}${kpi('EXPECTED READY',t.expected_ready?esc(t.expected_ready):'—',(t.expected_ready?'':'NEEDS A FEW DAYS OF OUTPUT · ')+'DEADLINE '+esc(t.deadline))}</div><p class="help">Dispatch: ${disp}</p>${link?`<div class="form-actions"><button class="secondary" data-act="order-link" data-token="${esc(link)}">COPY SHARE LINK</button></div>`:''}</section>`;
 }
 async function trackingPage(){
  if(role==='Buyer'){
@@ -215,7 +228,7 @@ const MASTERS={
  yarn_types:['Yarn types',[['count','COUNT','text',1],['material','MATERIAL','text',1],['colour','COLOUR','text',1],['reorder_kg','REORDER LEVEL (KG)','number']]],
  fabric_types:['Fabric types',[['name','NAME','text',1],['hsn','HSN'],['gst_rate','GST %','number']]],
  bom:['Fabric recipes (BOM)',[['fabric_type_id','FABRIC','fabric_types',1],['yarn_type_id','YARN','yarn_types',1],['kg_per_m','KG YARN PER METRE','number',1]]],
- machines:['Machines',[['name','NAME','text',1],['kind','KIND',['spinning','weaving','dyeing'],1],['overhead_per_hour','OVERHEAD ₹ / HOUR','number']]],
+ machines:['Machines',[['name','NAME','text',1],['kind','KIND',['spinning','weaving','dyeing'],1],['overhead_per_hour','OVERHEAD ₹ / HOUR','number'],['rate_m_per_hour','SPEED (M / HOUR)','number']]],
  workers:['Workers',[['name','NAME','text',1],['phone','PHONE'],['wage_type','WAGE TYPE',['daily','piece'],1],['rate','RATE ₹ (PER DAY, OR PER METRE)','number',1]]],
  shifts:['Shifts',[['name','NAME','text',1],['starts','STARTS','time'],['ends','ENDS','time']]]};
 const refName=(type,v)=>type==='fabric_types'?nameOf(M.fabric_types,v):type==='yarn_types'?yarnName(byId(M.yarn_types,v)):v;
@@ -234,22 +247,40 @@ async function reportsPage(){
 }
 
 const pages={Dashboard:roleDashboard,Orders:orderPage,Production:productionPage,Inventory:inventoryPage,Quality:qualityPage,Traceability:tracePage,Dispatch:dispatchPage,Tracking:trackingPage,Inbox:inboxPage,Reviews:reviewsPage,Workforce:workforcePage,Accounts:accountsPage,Masters:masterPage,Reports:reportsPage};
-async function render(){
+async function render(quiet){
  if(!allowed[role].includes(page))page=role==='Buyer'?'Tracking':'Dashboard';
  navRender();
- const seq=++renderSeq;let html;document.body.classList.add('busy');
+ const seq=++renderSeq;let html;if(!quiet)document.body.classList.add('busy');
  try{html=await pages[page]()}catch(e){html=head(page,'COULD NOT LOAD')+`<div class="alert">${esc(e.message)}</div>`}
  if(seq!==renderSeq)return;
  document.body.classList.remove('busy');
- $('#view').innerHTML=(flash?`<div class="notice" style="margin-bottom:11px">${flash}</div>`:'')+html;flash='';
+ $('#view').innerHTML=(flash?`<div class="notice" style="margin-bottom:11px">${flash}</div>`:'')+html;flash='';dirty=false;
  $$('#view .table').forEach(t=>{const h=[...t.querySelectorAll('th')].map(th=>th.textContent.trim());t.querySelectorAll('tbody tr').forEach(tr=>[...tr.children].forEach((td,i)=>td.dataset.label=h[i]||''))});
  $('#lastSaved').textContent='UPDATED '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
  if(afterRender){const f=afterRender;afterRender=null;f()}
 }
+// Live screens refresh every 10 s, but never while someone is typing, has a form half-filled, or a dialog open.
+const LIVE_PAGES=['Dashboard','Production','Orders','Inventory','Tracking','Quality','Dispatch'];
+$('#view').addEventListener('input',()=>{dirty=true});
+setInterval(()=>{if(document.hidden||$('#app').classList.contains('hidden')||!LIVE_PAGES.includes(page)||dirty||$('#modal').open||document.activeElement?.closest('#view form, #view select'))return;render(true)},10000);
 function setPage(p){if(!allowed[role].includes(p)){toast('Your role does not have access to '+p+'.');return}page=p;render();window.scrollTo({top:0,behavior:'smooth'})}
 
 // ---------- Kept from the original prototype: landing animation ----------
-function showOpening(){const opening=$('#opening'),tile=$('#videoTile'),reduced=matchMedia('(prefers-reduced-motion: reduce)').matches,zoom=()=>{const r=tile.getBoundingClientRect(),o=opening.getBoundingClientRect(),x=r.left-o.left,y=r.top-o.top;tile.style.position='absolute';tile.style.left=x+'px';tile.style.top=y+'px';tile.style.width=r.width+'px';tile.style.height=r.height+'px';tile.style.transformOrigin='top left';tile.style.willChange='transform';opening.appendChild(tile);if(reduced){opening.classList.add('zoom');tile.style.left='0px';tile.style.top='0px';tile.style.width='100%';tile.style.height='100%';tile.style.willChange='auto';return}requestAnimationFrame(()=>{opening.classList.add('zoom');const sx=opening.clientWidth/r.width,sy=opening.clientHeight/r.height;const animation=tile.animate([{transform:'translate3d(0,0,0) scale(1)'},{transform:`translate3d(${-x}px,${-y}px,0) scale(${sx},${sy})`}],{duration:1050,easing:'cubic-bezier(.2,.8,.2,1)',fill:'forwards'});animation.onfinish=()=>{tile.style.left='0px';tile.style.top='0px';tile.style.width='100%';tile.style.height='100%';tile.style.transform='none';tile.style.willChange='auto';animation.cancel()}})};if(reduced){zoom();return}setTimeout(zoom,4100)}
+// The opening is driven by scroll, not a timer: the loom film grows from its frame to fill the screen,
+// the stills step aside, then the headline arrives. Short pin so it feels quick.
+function showOpening(){
+ const opening=$('#opening'),tile=$('#videoTile'),copy=$('.opening-copy');
+ gsap.set(copy,{xPercent:-50,yPercent:-50,x:0,y:24,autoAlpha:0});
+ const tl=gsap.timeline({defaults:{ease:'none'}})
+  .to(tile,{width:()=>opening.clientWidth,height:()=>opening.clientHeight,maxHeight:'none',minHeight:0,borderRadius:0,borderWidth:0,duration:1},0)
+  .to('.opening-tile:not(.video-tile)',{autoAlpha:0,duration:.55},.1)
+  .to(['.film-label','.opening-cue','.opening-mark'],{autoAlpha:0,duration:.25},0)
+  .to(copy,{autoAlpha:1,y:0,duration:.4,ease:'power1.out'},.62)
+  .fromTo('.opening-progress i',{scaleX:0},{scaleX:1,duration:.4},.62);
+ if(matchMedia('(prefers-reduced-motion: reduce)').matches){tl.progress(1);return}
+ ScrollTrigger.create({animation:tl,trigger:opening,start:'top top',end:'+=75%',pin:true,scrub:.4,anticipatePin:1,invalidateOnRefresh:true,refreshPriority:1});
+ ScrollTrigger.refresh();
+}
 
 // ---------- Forms ----------
 const formData=form=>Object.fromEntries(new FormData(form).entries());
@@ -257,7 +288,7 @@ const handlers={
  async order(d){const o=await post('/orders',{buyer_id:+d.buyer_id,fabric_type_id:+d.fabric_type_id,colour:d.colour,qty_m:+d.qty_m,deadline:d.deadline,price_per_m:+d.price_per_m});flash=`Order <b>#${o.id}</b> created · yarn check: <b>${esc(o.feasibility.verdict)}</b>`;return'Order saved.'},
  async grn(d){const r=await post('/grn',{supplier_id:+d.supplier_id,yarn_type_id:+d.yarn_type_id,qty_kg:+d.qty_kg,rate:+d.rate,order_id:intOrNull(d.order_id),challan_no:d.challan_no||null});flash=`GRN-${r.grn.id} recorded · ${esc(yarnName(r.stock))} now ${num(r.stock.stock_kg)} kg. `+lowStockLine(r.low_stock);return'Goods receipt recorded.'},
  async issue(d){const r=await post('/issues',{order_id:+d.order_id,yarn_type_id:+d.yarn_type_id,qty_kg:+d.qty_kg,machine_id:intOrNull(d.machine_id)});flash=lowStockLine(r.low_stock);return'Yarn issued.'},
- async job(d){await post('/jobs',{order_id:+d.order_id,machine_id:+d.machine_id});return'Job card assigned.'},
+ async job(d){await post('/jobs',{order_id:+d.order_id,machine_id:+d.machine_id,operator_id:intOrNull(d.operator_id),shift_id:intOrNull(d.shift_id)});return'Job card assigned.'},
  async breakdown(d){const r=await post(`/machines/${d.machine_id}/status`,{status:'Breakdown',note:d.note});flash=`${esc(nameOf(M.machines,d.machine_id))} marked as breakdown. `+aiLine(r.triage,'triage')+(r.log.assignee?` · send: <b>${esc(r.log.assignee)}</b>`:'');return'Breakdown logged.'},
  async production(d,form){
   const body={shift_id:+d.shift_id,machine_id:+d.machine_id,order_id:+d.order_id,operator_id:+d.operator_id,output:+d.output};
@@ -398,7 +429,7 @@ $('#loginForm').addEventListener('submit',submitLogin);
 $('#gate').addEventListener('click',e=>{
  const tab=e.target.closest('[data-access]');if(tab){setLoginMode(tab.dataset.access);return}
  if(e.target.closest('#firstSetup')){firstSetup();return}
- if(e.target.id==='backToStory'){e.preventDefault();$('#gate').classList.add('hidden');$('#landing').classList.remove('hidden');location.hash='story';$('#story').scrollIntoView({behavior:'smooth'})}
+ if(e.target.id==='backToStory'){e.preventDefault();$('#gate').classList.add('hidden');$('#landing').classList.remove('hidden');ScrollTrigger.refresh();location.hash='story';$('#story').scrollIntoView({behavior:'smooth'})}
 });
 $('#enterWorkspace').addEventListener('click',()=>{$('#landing').classList.add('hidden');$('#gate').classList.remove('hidden');window.scrollTo({top:0,behavior:'smooth'})});
 $('#topLogin').addEventListener('click',()=>$('#enterWorkspace').click());

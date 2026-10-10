@@ -5,3 +5,4 @@ node_modules/
 dist/
 *.pyc
 .env
+.DS_Store

@@ -7,10 +7,18 @@ This is the reference for building the frontend. The live, clickable schema for 
 ```bash
 cd backend
 pip install -r requirements.txt
+python3 seed.py                   # optional: demo data + one account per role (owner, admin, store, floor, qc)
 uvicorn app:app --reload          # http://localhost:8000
 ```
 
-- The database is a single SQLite file, `backend/mill.db` when run from `backend/`. To reset everything, delete it.
+```bash
+cd frontend
+npm install
+npm run dev                       # http://localhost:5173, proxies /api/* to the backend on :8000
+```
+
+- The database is a single SQLite file, `backend/mill.db`, wherever you start the server from (`DB_PATH` overrides it). To reset everything, delete it. `seed.py` only runs on an empty database and prints the demo password (`DEMO_PASSWORD` to choose it).
+- The frontend calls the API at `/api`. For a deployed build, either serve the API under `/api` on the same host, or set `window.EVEREST_API = "https://api.example.com"` before `src/app.js` loads.
 - CORS allows `http://localhost:5173` (the Vite dev server). To allow other addresses, set `CORS_ORIGINS` to a comma-separated list, for example `CORS_ORIGINS=http://localhost:5173,https://mill.example.com`.
 - AI is optional and runs entirely on OpenRouter. Set `OPENROUTER_API_KEY` to turn it on. Jev (`typesafe/jev-1.13`) makes the decisions, and a chat model (`CHAT_MODEL`, default `google/gemini-2.5-flash`) drafts replies and reads challan photos. Without a key, every AI decision goes to the human review queue, the risk endpoint returns `null`, and the reply-draft and challan-photo endpoints return `503`.
 
@@ -171,6 +179,7 @@ Unknown fields return `422`. Duplicates and bad foreign keys return `409`.
 | POST | `/machines/{id}/status` | `{status, note?}` | One-tap status. With `Breakdown` + `note`, the AI triages it. Returns `{log, triage}` (see the AI responses section). |
 | GET | `/machines/{id}/log` | none | Status history, including triage fields |
 | POST | `/production` | `{shift_id, machine_id, order_id, operator_id, output, hours?, entry_date?}` | `operator_id` is a **worker** id. `entry_date` defaults to today. `hours` drives overhead and wage costing. |
+| GET | `/production` | `?entry_date=` | The latest 200 entries, with `machine`, `operator` and `shift` names |
 | POST | `/rolls` | `{order_id, machine_id, shift_id, operator_id, metres}` | Returns the roll with `qr` (for example `"ETM-3F9A1C22B0"`). **Render the QR image client-side** from that string (for example with the `qrcode` npm package). |
 | GET | `/rolls/{qr}` | none | **Traceability view** (below) |
 | GET | `/floor` | none | Live floor dashboard (below) |

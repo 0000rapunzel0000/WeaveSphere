@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 import ai
 
-DB_PATH = os.environ.get("DB_PATH", "mill.db")
+DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "mill.db"))
 app = FastAPI(title="Everest Textile Mills")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(","),
                    allow_methods=["*"], allow_headers=["*"])
@@ -609,6 +609,14 @@ def machine_log(mid: int, db=Depends(get_db), _=Depends(user)):
 def log_production(body: ProductionIn, db=Depends(get_db), _=role("admin", "supervisor")):
     return one(db, "SELECT * FROM production_entries WHERE id = ?",
                insert(db, "production_entries", body.model_dump(mode="json")))
+
+
+@app.get("/production")
+def list_production(entry_date: date | None = None, db=Depends(get_db), _=Depends(user)):
+    d = entry_date and entry_date.isoformat()
+    return rows(db.execute("""SELECT p.*, m.name machine, w.name operator, s.name shift FROM production_entries p
+        JOIN machines m ON m.id = p.machine_id JOIN workers w ON w.id = p.operator_id JOIN shifts s ON s.id = p.shift_id
+        WHERE ? IS NULL OR p.entry_date = ? ORDER BY p.id DESC LIMIT 200""", (d, d)))
 
 
 @app.get("/floor")

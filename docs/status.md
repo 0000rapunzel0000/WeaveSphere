@@ -2,7 +2,7 @@
 
 *Everest Textile Mills MVP · as of 2026-10-10*
 
-The **backend is complete** for every MVP feature in the spec (§3.0–§4). It is tested end to end against the demo script, and the AI side has been checked live on OpenRouter with a real key. The `frontend/` folder holds the Everest landing page (React + Vite + GSAP), which **doesn't call the API yet**. [backend.md](backend.md) is the API guide for building the app screens.
+The **backend is complete** for every MVP feature in the spec (§3.0–§4). It is tested end to end against the demo script, and the AI side has been checked live on OpenRouter with a real key. The **frontend is wired to the backend**: every screen reads and writes through the API, sign-in is checked by the server, and buyers track orders by link without an account. [backend.md](backend.md) is the API guide.
 
 ---
 
@@ -207,15 +207,15 @@ These are marked with `ponytail:` comments in the code. Each one is fine for the
 
 ## 6. Not built (by choice)
 
-- **Frontend app screens:** everything beyond the landing page, including drawing the QR image, the camera scanner, invoice number formatting and the mobile screens
+- **Frontend:** a camera QR scanner (rolls are scanned with a USB/Bluetooth scanner or typed), passkey and Google sign-in, and partial dispatch
 - **Message delivery:** WhatsApp and email, both incoming and outgoing
 - **Account admin:** user deletion and password reset; sessions never expire
 - **Out of scope per the spec (§8):** purchase orders, yarn lots, partial dispatch, e-way bill, overtime, charts, voice, photo defect detection, audit log, Excel/PDF export
 
 ## 7. Next steps
 
-1. **Commit** the OpenRouter work (the `backend/` and `docs/` changes, plus the new `backend/smoke_ai.py` and `docs/status.md`).
+1. **Commit** the frontend wiring (`frontend/`, `backend/app.py`, `backend/seed.py`, docs).
 2. **Test the challan photo reading:** `cd backend && python3 smoke_ai.py challan.jpg`
 3. **Decide the threshold:** keep it as a launch setting (`AI_THRESHOLD=0.7`) or change the default in the code.
 4. **Replace the OpenRouter key.** It appeared in plain text in the terminal history.
-5. **Frontend team:** start from [backend.md](backend.md). The screen-to-endpoint map is at the bottom.
+5. **Run it:** `python3 seed.py` and `uvicorn app:app` in `backend/`, then `npm run dev` in `frontend/`. Sign in as `owner`.

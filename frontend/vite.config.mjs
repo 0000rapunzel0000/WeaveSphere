@@ -7,4 +7,10 @@ import path from 'node:path';
 export default defineConfig({
   cacheDir: path.join(os.tmpdir(), 'everest-textile-vite-cache'),
   publicDir: 'public',
+  // The app calls /api/...; in development that goes to the backend on port 8000.
+  server: {
+    proxy: {
+      '/api': { target: 'http://localhost:8000', rewrite: (p) => p.replace(/^\/api/, '') },
+    },
+  },
 });

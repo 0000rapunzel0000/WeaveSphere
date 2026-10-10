@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS machines (
   name TEXT NOT NULL UNIQUE,
   kind TEXT NOT NULL CHECK (kind IN ('spinning', 'weaving', 'dyeing')),
   status TEXT NOT NULL DEFAULT 'Idle' CHECK (status IN ('Running', 'Idle', 'Breakdown', 'Maintenance')),
-  overhead_per_hour REAL NOT NULL DEFAULT 0 CHECK (overhead_per_hour >= 0)
+  overhead_per_hour REAL NOT NULL DEFAULT 0 CHECK (overhead_per_hour >= 0),
+  rate_m_per_hour REAL NOT NULL DEFAULT 0 CHECK (rate_m_per_hour >= 0) -- running speed; 0 = no live output
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -119,7 +120,11 @@ CREATE TABLE IF NOT EXISTS job_cards ( -- stage = machine.kind
   order_id INTEGER NOT NULL REFERENCES orders,
   machine_id INTEGER NOT NULL REFERENCES machines,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  operator_id INTEGER REFERENCES workers, -- who live output is credited to
+  shift_id INTEGER REFERENCES shifts,
+  running_since TEXT, -- UTC; when the machine last started running this job
+  last_tick TEXT      -- UTC; live output has been counted up to here (NULL while stopped)
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS machine_status_log (
@@ -147,7 +152,8 @@ CREATE TABLE IF NOT EXISTS production_entries (
   order_id INTEGER NOT NULL REFERENCES orders,
   operator_id INTEGER NOT NULL REFERENCES workers,
   output REAL NOT NULL CHECK (output >= 0), -- metres (kg for spinning)
-  hours REAL NOT NULL DEFAULT 0 CHECK (hours >= 0)
+  hours REAL NOT NULL DEFAULT 0 CHECK (hours >= 0),
+  auto INTEGER NOT NULL DEFAULT 0 -- 1 = counted live from a running machine
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS rolls (

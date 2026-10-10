@@ -1,18 +1,20 @@
 """Everest Textile Mills backend. Run: uvicorn app:app --reload  (API docs at /docs)"""
 import hashlib
 import json
+import logging
 import math
 import os
 import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -27,6 +29,8 @@ if os.path.exists(_env):
 import ai  # noqa: E402  reads settings at import
 
 SESSION_HOURS = float(os.environ.get("SESSION_HOURS", "24"))
+SIM_SPEED = float(os.environ.get("SIM_SPEED", "1"))  # machine time per real time; e.g. 60 = an hour per minute for demos
+ACCRUE_EVERY = float(os.environ.get("ACCRUE_EVERY", "2"))  # seconds between live-floor updates
 DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "mill.db"))
 app = FastAPI(title="Everest Textile Mills")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(","),
@@ -44,7 +48,10 @@ def connect():
 def migrate(db):
     """Columns added after a database was first created; CREATE TABLE IF NOT EXISTS can't add them."""
     for table, col, ddl in [("material_issues", "rate", "REAL"), ("ai_reviews", "auto", "INTEGER NOT NULL DEFAULT 0"),
-                            ("ai_reviews", "final", "TEXT")]:
+                            ("ai_reviews", "final", "TEXT"), ("machines", "rate_m_per_hour", "REAL NOT NULL DEFAULT 0"),
+                            ("job_cards", "operator_id", "INTEGER REFERENCES workers"),
+                            ("job_cards", "shift_id", "INTEGER REFERENCES shifts"), ("job_cards", "running_since", "TEXT"),
+                            ("job_cards", "last_tick", "TEXT"), ("production_entries", "auto", "INTEGER NOT NULL DEFAULT 0")]:
         have = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
         if have and col not in have:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
@@ -344,7 +351,7 @@ def tracking(db, o):
     fabric = db.execute("SELECT name FROM fabric_types WHERE id = ?", (o["fabric_type_id"],)).fetchone()[0]
     return {
         "order_no": o["id"], "fabric": fabric, "colour": o["colour"], "stage": order_status(db, o, t),
-        "target_m": o["qty_m"], "produced_m": produced, "passed_m": t["passed_m"], "dispatched_m": t["dispatched_m"],
+        "target_m": o["qty_m"], "produced_m": round(produced, 2), "passed_m": t["passed_m"], "dispatched_m": t["dispatched_m"],
         "rolls_produced": t["rolls"], "rolls_passed": t["rolls_passed"],
         "progress_pct": round(100 * min(produced / o["qty_m"], 1), 1),
         "deadline": o["deadline"], "expected_ready": expected_ready(produced, o["qty_m"], s),
@@ -627,11 +634,129 @@ def resolve_review(rid: int, fields: dict[str, str] | None = None, db=Depends(ge
     return {"ok": True, "applied": applied}
 
 
+# ---------- Live floor: running machines produce output and use yarn ----------
+
+def utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def ts(d):
+    return d.strftime("%Y-%m-%d %H:%M:%S")  # same format as SQLite CURRENT_TIMESTAMP (UTC)
+
+
+def stage_done(db, oid, kind):
+    return db.execute("SELECT COALESCE(SUM(p.output), 0) FROM production_entries p JOIN machines m ON m.id = p.machine_id "
+                      "WHERE p.order_id = ? AND m.kind = ?", (oid, kind)).fetchone()[0]
+
+
+def yarn_at_loom(db, oid):
+    """Per recipe yarn: kg issued to the order but not yet woven (issued - woven metres x kg/m), plus store stock."""
+    return rows(db.execute("""
+        SELECT b.yarn_type_id, b.kg_per_m, s.stock_kg, s.avg_rate, s.count, s.material, s.colour,
+          COALESCE((SELECT SUM(qty_kg) FROM material_issues WHERE order_id = :o AND yarn_type_id = b.yarn_type_id), 0)
+            - :woven * b.kg_per_m buffer_kg
+        FROM orders o JOIN bom b ON b.fabric_type_id = o.fabric_type_id JOIN yarn_stock s ON s.id = b.yarn_type_id
+        WHERE o.id = :o""", {"o": oid, "woven": stage_done(db, oid, "weaving")}))
+
+
+def crew(db, job):
+    """Operator and shift that live output is credited to: the job card's, else whoever last ran the machine."""
+    op, sh = job["operator_id"], job["shift_id"]
+    if not (op and sh):
+        last = db.execute("SELECT operator_id, shift_id FROM production_entries WHERE machine_id = ? ORDER BY id DESC "
+                          "LIMIT 1", (job["machine_id"],)).fetchone()
+        op, sh = op or (last and last[0]), sh or (last and last[1])
+    return op, sh
+
+
+def stop_machine(db, job, why, done=False):
+    db.execute("UPDATE machines SET status = 'Idle' WHERE id = ?", (job["machine_id"],))
+    db.execute("UPDATE job_cards SET last_tick = NULL, status = ? WHERE id = ?", ("done" if done else "open", job["id"]))
+    insert(db, "machine_status_log", {"machine_id": job["machine_id"], "status": "Idle", "note": why})
+
+
+def accrue(db):
+    """Bring every running machine up to now. Caller holds the write lock.
+    Output = speed x elapsed machine time, capped by what the order still needs at that stage and, on looms,
+    by yarn: first the yarn already issued to the order, then store stock (issued automatically, at the moving
+    average rate). Out of yarn or stage complete -> the machine stops and the log says why."""
+    # ponytail: spinning output is kg of yarn, not metres; it is not run live.
+    now = utcnow()
+    for j in rows(db.execute("""SELECT j.*, m.kind, m.rate_m_per_hour rate, o.qty_m FROM job_cards j
+            JOIN machines m ON m.id = j.machine_id JOIN orders o ON o.id = j.order_id
+            WHERE j.status = 'open' AND j.last_tick IS NOT NULL AND m.status = 'Running'
+              AND m.rate_m_per_hour > 0 AND m.kind != 'spinning'""")):
+        hours = max(0.0, (now - datetime.strptime(j["last_tick"][:19], "%Y-%m-%d %H:%M:%S")).total_seconds()) / 3600 * SIM_SPEED
+        remaining = max(0.0, j["qty_m"] - stage_done(db, j["order_id"], j["kind"]))
+        metres, why = min(j["rate"] * hours, remaining), None
+        op, sh = crew(db, j)
+        if not (op and sh):
+            stop_machine(db, j, "stopped: give the job card an operator and shift to record live output")
+            continue
+        if j["kind"] == "weaving" and metres > 0:
+            lines = yarn_at_loom(db, j["order_id"])
+            for x in lines:
+                can = (max(0, x["buffer_kg"]) + max(0, x["stock_kg"])) / x["kg_per_m"]
+                if can < metres - 1e-9:
+                    metres, why = max(0.0, can), f"stopped: out of {x['count']} {x['material']} {x['colour']} yarn"
+            for x in lines:
+                draw = min(metres * x["kg_per_m"] - max(0, x["buffer_kg"]), max(0, x["stock_kg"]))
+                if draw > 1e-6:
+                    insert(db, "material_issues", {"order_id": j["order_id"], "yarn_type_id": x["yarn_type_id"],
+                                                   "machine_id": j["machine_id"], "qty_kg": draw, "rate": x["avg_rate"]})
+        if metres > 0:
+            day, used = date.today().isoformat(), metres / j["rate"]
+            key = (j["machine_id"], j["order_id"], op, sh, day)
+            e = db.execute("SELECT id FROM production_entries WHERE auto = 1 AND machine_id = ? AND order_id = ? "
+                           "AND operator_id = ? AND shift_id = ? AND entry_date = ?", key).fetchone()
+            if e:
+                db.execute("UPDATE production_entries SET output = output + ?, hours = hours + ? WHERE id = ?",
+                           (metres, used, e[0]))
+            else:
+                insert(db, "production_entries", {"machine_id": key[0], "order_id": key[1], "operator_id": op,
+                                                  "shift_id": sh, "entry_date": day, "output": metres, "hours": used,
+                                                  "auto": 1})
+        if remaining - metres <= 1e-6:
+            stop_machine(db, j, f"finished: order #{j['order_id']} {j['kind']} complete", done=True)
+        elif why:
+            stop_machine(db, j, why)
+        else:
+            db.execute("UPDATE job_cards SET last_tick = ? WHERE id = ?", (ts(now), j["id"]))
+
+
+_last_accrual = 0.0
+
+
+def accrue_now():
+    """Live-floor update before a request is served, at most every ACCRUE_EVERY seconds. Never blocks a request."""
+    global _last_accrual
+    if time.time() - _last_accrual < ACCRUE_EVERY:
+        return
+    _last_accrual = time.time()
+    db = connect()
+    try:
+        if db.execute("SELECT 1 FROM job_cards WHERE status = 'open' AND last_tick IS NOT NULL LIMIT 1").fetchone():
+            with tx(db):
+                accrue(db)
+    except Exception:
+        logging.exception("live floor update failed")
+    finally:
+        db.close()
+
+
+@app.middleware("http")
+async def live_floor(request, call_next):
+    await run_in_threadpool(accrue_now)
+    return await call_next(request)
+
+
 # ---------- Production floor ----------
 
 class JobIn(BaseModel):
     order_id: int
     machine_id: int
+    operator_id: int | None = None  # live output is credited to them; defaults to the machine's last operator
+    shift_id: int | None = None
 
 
 class StatusIn(BaseModel):
@@ -660,14 +785,21 @@ class RollIn(BaseModel):
 @app.post("/jobs")
 def assign_job(body: JobIn, db=Depends(get_db), _=role("admin", "supervisor")):
     with tx(db):  # one open job per machine
-        db.execute("UPDATE job_cards SET status = 'done' WHERE machine_id = ? AND status = 'open'", (body.machine_id,))
-        jid = insert(db, "job_cards", body.model_dump())
+        accrue(db)  # credit the outgoing job up to now
+        db.execute("UPDATE job_cards SET status = 'done', last_tick = NULL WHERE machine_id = ? AND status = 'open'",
+                   (body.machine_id,))
+        running = one(db, "SELECT status FROM machines WHERE id = ?", body.machine_id)["status"] == "Running"
+        now = ts(utcnow())
+        jid = insert(db, "job_cards", {**body.model_dump(), "running_since": now if running else None,
+                                       "last_tick": now if running else None})
     return one(db, "SELECT * FROM job_cards WHERE id = ?", jid)
 
 
 @app.post("/jobs/{jid}/done")
 def finish_job(jid: int, db=Depends(get_db), _=role("admin", "supervisor")):
-    db.execute("UPDATE job_cards SET status = 'done' WHERE id = ?", (jid,))
+    with tx(db):
+        accrue(db)
+        db.execute("UPDATE job_cards SET status = 'done', last_tick = NULL WHERE id = ?", (jid,))
     return one(db, "SELECT * FROM job_cards WHERE id = ?", jid)
 
 
@@ -675,7 +807,18 @@ def finish_job(jid: int, db=Depends(get_db), _=role("admin", "supervisor")):
 def machine_status(mid: int, body: StatusIn, db=Depends(get_db), _=role("admin", "supervisor")):
     m = one(db, "SELECT * FROM machines WHERE id = ?", mid)
     with tx(db):
+        accrue(db)  # count output up to the moment the status changes
+        job = db.execute("SELECT * FROM job_cards WHERE machine_id = ? AND status = 'open'", (mid,)).fetchone()
+        if body.status == "Running" and job and m["rate_m_per_hour"] and m["kind"] != "spinning" and not all(crew(db, job)):
+            raise HTTPException(422, f"{m['name']} needs an operator and shift on its job card before it can run. "
+                                     "Re-assign the order with them in 'Assign order to machine'.")
         db.execute("UPDATE machines SET status = ? WHERE id = ?", (body.status, mid))
+        if body.status == "Running":
+            now = ts(utcnow())
+            db.execute("UPDATE job_cards SET running_since = ?, last_tick = ? WHERE machine_id = ? AND status = 'open' "
+                       "AND last_tick IS NULL", (now, now, mid))
+        else:
+            db.execute("UPDATE job_cards SET last_tick = NULL WHERE machine_id = ? AND status = 'open'", (mid,))
         lid = insert(db, "machine_status_log", {"machine_id": mid, **body.model_dump()})
     triage = None
     if body.status == "Breakdown" and body.note:
@@ -708,16 +851,33 @@ def list_production(entry_date: date | None = None, db=Depends(get_db), _=Depend
 @app.get("/floor")
 def floor(db=Depends(get_db), _=Depends(user)):
     machines = rows(db.execute("""
-        SELECT m.*, j.order_id,
-          COALESCE((SELECT SUM(output) FROM production_entries WHERE machine_id = m.id AND entry_date = date('now')), 0) today_output
-        FROM machines m LEFT JOIN job_cards j ON j.machine_id = m.id AND j.status = 'open' ORDER BY m.kind, m.name"""))
+        SELECT m.*, j.id job_id, j.order_id, j.running_since, w.name operator, s.name shift, o.qty_m,
+          (SELECT note FROM machine_status_log WHERE machine_id = m.id ORDER BY id DESC LIMIT 1) last_note,
+          COALESCE((SELECT SUM(output) FROM production_entries WHERE machine_id = m.id AND entry_date = :d), 0) today_output
+        FROM machines m LEFT JOIN job_cards j ON j.machine_id = m.id AND j.status = 'open'
+        LEFT JOIN orders o ON o.id = j.order_id LEFT JOIN workers w ON w.id = j.operator_id LEFT JOIN shifts s ON s.id = j.shift_id
+        ORDER BY m.kind, m.name""", {"d": date.today().isoformat()}))
     orders = {}
     for m in machines:
         m["idle"] = m["status"] != "Running"
-        if m["order_id"] and m["order_id"] not in orders:
-            orders[m["order_id"]] = tracking(db, one(db, "SELECT * FROM orders WHERE id = ?", m["order_id"]))
-        m["order_progress_pct"] = orders[m["order_id"]]["progress_pct"] if m["order_id"] else None
-    return {"machines": machines, "idle_count": sum(m["idle"] for m in machines), "orders": list(orders.values())}
+        m["order_progress_pct"] = m["stage_done_m"] = m["finishes_at"] = None
+        m["yarn_kg_per_hour"], m["yarn_at_loom"] = 0, []
+        if m["order_id"]:
+            if m["order_id"] not in orders:
+                orders[m["order_id"]] = tracking(db, one(db, "SELECT * FROM orders WHERE id = ?", m["order_id"]))
+            m["order_progress_pct"] = orders[m["order_id"]]["progress_pct"]
+            m["stage_done_m"] = round(stage_done(db, m["order_id"], m["kind"]), 2)
+            remaining = max(0, m["qty_m"] - m["stage_done_m"])
+            if m["status"] == "Running" and m["rate_m_per_hour"] and m["kind"] != "spinning" and remaining:
+                real_hours = remaining / m["rate_m_per_hour"] / SIM_SPEED
+                m["finishes_at"] = ts(utcnow() + timedelta(hours=real_hours))
+            if m["kind"] == "weaving":
+                lines = yarn_at_loom(db, m["order_id"])
+                m["yarn_kg_per_hour"] = round(m["rate_m_per_hour"] * sum(x["kg_per_m"] for x in lines), 3)
+                m["yarn_at_loom"] = [{"yarn": f'{x["count"]} {x["material"]} · {x["colour"]}', "kg": round(max(0, x["buffer_kg"]), 2),
+                                      "store_kg": round(x["stock_kg"], 2)} for x in lines]
+    return {"machines": machines, "idle_count": sum(m["idle"] for m in machines), "orders": list(orders.values()),
+            "sim_speed": SIM_SPEED}
 
 
 @app.post("/rolls")

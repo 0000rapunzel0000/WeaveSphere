@@ -4,6 +4,8 @@ import tempfile
 
 os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
 os.environ["OPENROUTER_API_KEY"] = ""  # blank, not unset: stops app.py loading the real key from .env
+# Pin settings that backend/.env may set for demos, so results never depend on that file.
+os.environ.update(SIM_SPEED="1", AI_THRESHOLD="0.8")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -243,6 +245,56 @@ def test_hardening():
     assert c.post("/grn/challan", json={"image_b64": "x", "mime": "text/html"}, headers=h).status_code == 422
 
 
+def test_live_floor():
+    """A running loom weaves at its speed, uses issued yarn then store yarn, stops when out, and closes the job when done."""
+    h = owner_headers()
+    m = lambda t, d: ok(c.post(f"/master/{t}", json=d, headers=h))["id"]  # noqa: E731
+    buyer, sup = m("buyers", {"name": "Live"}), m("suppliers", {"name": "Live Yarns"})
+    yarn = m("yarn_types", {"count": "8s", "material": "linen", "colour": "flax"})
+    fab = m("fabric_types", {"name": "Linen sheet"})
+    m("bom", {"fabric_type_id": fab, "yarn_type_id": yarn, "kg_per_m": 0.5})
+    loom = m("machines", {"name": "Loom L", "kind": "weaving", "rate_m_per_hour": 10, "overhead_per_hour": 100})
+    shift, op = m("shifts", {"name": "L shift"}), m("workers", {"name": "L op", "wage_type": "piece", "rate": 3})
+    ok(c.post("/grn", json={"supplier_id": sup, "yarn_type_id": yarn, "qty_kg": 20, "rate": 100}, headers=h))
+    oid = ok(c.post("/orders", json={"buyer_id": buyer, "fabric_type_id": fab, "colour": "flax", "qty_m": 100,
+                                     "deadline": "2099-01-01", "price_per_m": 1}, headers=h))["id"]
+    ok(c.post("/issues", json={"order_id": oid, "yarn_type_id": yarn, "qty_kg": 5}, headers=h))  # 5 kg at the loom
+    ok(c.post("/jobs", json={"order_id": oid, "machine_id": loom}, headers=h))
+    r = c.post(f"/machines/{loom}/status", json={"status": "Running"}, headers=h)  # nobody to credit the output to
+    assert r.status_code == 422 and "operator and shift" in r.json()["detail"]
+    ok(c.post("/jobs", json={"order_id": oid, "machine_id": loom, "operator_id": op, "shift_id": shift}, headers=h))
+    ok(c.post(f"/machines/{loom}/status", json={"status": "Running"}, headers=h))
+
+    def run_for(hours):
+        db = app.connect()
+        db.execute("UPDATE job_cards SET last_tick = datetime('now', ?) WHERE machine_id = ? AND status = 'open'",
+                   (f"-{hours} hours", loom))
+        db.close()
+        app._last_accrual = 0
+        return [x for x in ok(c.get("/floor", headers=h))["machines"] if x["id"] == loom][0]
+
+    stock = lambda: [y for y in ok(c.get("/stock", headers=h)) if y["id"] == yarn][0]["stock_kg"]  # noqa: E731
+    f = run_for(2)  # 20 m needs 10 kg: 5 kg already at the loom + 5 kg drawn from the store
+    assert (round(f["stage_done_m"], 1), f["status"], f["yarn_kg_per_hour"]) == (20.0, "Running", 5.0)
+    assert round(stock(), 1) == 10.0 and f["finishes_at"]
+    o = ok(c.get(f"/orders/{oid}", headers=h))
+    assert (o["produced_m"], o["progress_pct"], o["stage"]) == (20.0, 20.0, "Weaving")
+
+    f = run_for(10)  # wants 100 m but only 10 kg left in the store = 20 m more, then it stops
+    assert (round(f["stage_done_m"], 1), f["status"], round(stock(), 3)) == (40.0, "Idle", 0)
+    assert "out of 8s linen flax" in ok(c.get(f"/machines/{loom}/log", headers=h))[0]["note"]
+
+    ok(c.post("/grn", json={"supplier_id": sup, "yarn_type_id": yarn, "qty_kg": 100, "rate": 100}, headers=h))
+    ok(c.post(f"/machines/{loom}/status", json={"status": "Running"}, headers=h))
+    f = run_for(100)  # far more than needed: finishes the remaining 60 m and closes the job
+    assert (f["status"], f["job_id"], round(stage_done := ok(c.get(f"/orders/{oid}", headers=h))["produced_m"], 1)) \
+        == ("Idle", None, 100.0), stage_done
+    assert "finished" in ok(c.get(f"/machines/{loom}/log", headers=h))[0]["note"]
+    assert round(stock(), 1) == 70.0  # 100 m x 0.5 kg = 50 kg used in all: 5 issued + 45 from the store
+    cost = ok(c.get(f"/reports/order-cost/{oid}", headers=h))
+    assert (cost["wages"], cost["overhead"]) == (300.0, 1000.0)  # 100 m x 3 piece rate; 10 loom hours x 100
+
+
 def test_last_yarn_cannot_be_issued_twice():
     """Two people issue the last 100 kg at the same moment: exactly one wins, stock never goes negative.
     The stock read is slowed down so both requests are inside the check at once; only the write lock saves it."""
@@ -294,5 +346,6 @@ def test_last_yarn_cannot_be_issued_twice():
 if __name__ == "__main__":
     test_demo_flow()
     test_hardening()
+    test_live_floor()
     test_last_yarn_cannot_be_issued_twice()
     print("ok")

@@ -246,7 +246,7 @@ details.qa .a p{margin:6px 0}
     <tr><th>Value</th><th>How it is computed</th><th>Why</th></tr>
     <tr><td>Yarn stock</td><td><code>SUM(grn.qty) − SUM(issues.qty)</code> per yarn type, in the <code>yarn_stock</code> view</td><td>Can never drift from the receipts and issues that caused it.</td></tr>
     <tr><td>Yarn cost rate</td><td>Moving average of stock on hand: (value received − value issued) ÷ kg on hand. Saved on each issue.</td><td>Past months never change when a new delivery arrives.</td></tr>
-    <tr><td>Order stage</td><td>Dispatched if a truck closed → Ready if passed metres ≥ target → In QC if rolls are waiting → furthest machine stage with a job card → Pending</td><td>No status field anyone can forget to update.</td></tr>
+    <tr><td>Order stage</td><td>Dispatched once shipped metres reach the target → Ready if passed metres ≥ target → In QC if rolls are waiting → furthest machine stage with a job card → Pending</td><td>No status field anyone can forget to update.</td></tr>
     <tr><td>Progress, ETA</td><td>max(roll metres, furthest-stage output) ÷ target; ETA from the last 7 days' output per active day</td><td>Fabric on the loom counts before any roll exists.</td></tr>
     <tr><td>Feasibility</td><td>Need − issued vs stock minus what earlier open orders still need</td><td>Two orders can't both claim the same yarn.</td></tr>
   </table></div>
@@ -356,7 +356,7 @@ details.qa .a p{margin:6px 0}
   <div class="tablewrap"><table>
     <tr><th>Area</th><th>What is in place</th><th>Gap</th></tr>
     <tr><td>Passwords</td><td>scrypt (n=2¹⁴) with a per-user random salt, constant-time compare</td><td>No reset flow</td></tr>
-    <tr><td>Sessions</td><td>32-byte random bearer tokens in the DB; logout deletes them</td><td><span class="pill mid">no expiry</span></td></tr>
+    <tr><td>Sessions</td><td>32-byte random bearer tokens in the DB; logout deletes them; expire after 24 h (<code>SESSION_HOURS</code>); 5 failed sign-ins lock a username for 15 min; unknown usernames take as long to reject as wrong passwords</td><td>No password reset</td></tr>
     <tr><td>Authorisation</td><td><code>role()</code> dependency on every write; owner passes everything</td><td>—</td></tr>
     <tr><td>SQL injection</td><td>All values parameterised. Table/column names only from code, or validated against <code>PRAGMA table_info</code></td><td>—</td></tr>
     <tr><td>Buyer links</td><td>128-bit unguessable token per order; shows progress only, no prices or other orders</td><td>Not revocable yet</td></tr>
@@ -437,19 +437,16 @@ details.qa .a p{margin:6px 0}
     <p>One end-to-end test drives the full demo over HTTP, from GRN to P&amp;L, with exact expected figures. A dedicated race test proves the stock lock. A live smoke script hits the real AI with the app's exact questions. And the frontend was clicked through screen by screen against a seeded database.</p></div></details>
 
   <details class="qa"><summary>What would you do with another month?</summary><div class="a">
-    <p>Session expiry and password reset; partial dispatch; WhatsApp integration for real message intake and sending; a camera QR scanner on phones; calibrate the AI threshold from the accuracy report; per-month stock snapshots; and a correction screen for auto-applied AI decisions in the frontend.</p></div></details>
+    <p>Password reset and user deactivation; WhatsApp integration for real message intake and sending; a camera QR scanner on phones; calibrate the AI threshold from the accuracy report; per-month stock snapshots.</p></div></details>
 </section>
 
 <section id="limits">
   <h2>13. Known limits</h2>
   <div class="tablewrap"><table>
     <tr><th>Limit</th><th>Impact</th><th>Fix</th></tr>
-    <tr><td>Partial dispatch out of scope</td><td>An order shows "Dispatched" after its first truck closes, even if only part shipped</td><td>Dispatched only when shipped metres ≥ target</td></tr>
-    <tr><td>Sessions never expire</td><td>A stolen token works until logout</td><td>Expiry column + check in <code>user()</code></td></tr>
     <tr><td>No WhatsApp/email integration</td><td>Messages are pasted in; replies are copied out and marked sent</td><td>WhatsApp Business webhook → <code>POST /messages</code></td></tr>
     <tr><td>Money stored as rounded decimals</td><td>Fine at mill scale; not audit-grade</td><td>Integer paise</td></tr>
     <tr><td>One query per order in <code>/orders</code> and <code>/floor</code></td><td>Fine for dozens of orders</td><td>Batch the tracking queries</td></tr>
-    <tr><td>Frontend Reviews page shows only the open queue</td><td>Correcting an auto-applied decision needs the API</td><td>Add a "recent decisions" tab</td></tr>
     <tr><td>Challan photo reading untested live</td><td>May need prompt tuning</td><td><code>python3 smoke_ai.py challan.jpg</code></td></tr>
     <tr><td>No camera QR scanner</td><td>Rolls are scanned with a USB/Bluetooth scanner or typed</td><td>Browser camera + a QR decoding library</td></tr>
   </table></div>

@@ -54,8 +54,10 @@ def _chat(content, schema=None):
     body = {"model": CHAT_MODEL, "messages": [{"role": "user", "content": content}]}
     if schema:
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
-    text = _post("/v1/chat/completions", body, timeout=60)["choices"][0]["message"]["content"]
-    return json.loads(text) if schema else text.strip()
+    text = _post("/v1/chat/completions", body, timeout=30)["choices"][0]["message"]["content"].strip()
+    if schema and text.startswith("```"):  # some models wrap JSON in a Markdown fence despite response_format
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+    return json.loads(text) if schema else text
 
 
 LANGS = {"en": "English", "ta": "Tamil", "hi": "Hindi"}
@@ -63,7 +65,9 @@ LANGS = {"en": "English", "ta": "Tamil", "hi": "Hindi"}
 
 def draft_reply(message: str, order_data: dict, lang: str) -> str:
     return _chat(f"You are the office of Everest Textile Mills. Draft a short, polite WhatsApp reply in {LANGS[lang]} "
-                 "to the buyer's message, using ONLY the live order data below. Do not invent dates or numbers. "
+                 "to the buyer's message, using ONLY the live order data below (all of this buyer's orders; answer about the "
+                 "order number they mention). If what they ask isn't in the data, say the office will check and reply. "
+                 "Do not invent dates or numbers. "
                  "Reply with the message text only.\n"
                  f"Buyer message: {message}\nOrder data: {json.dumps(order_data, default=str)}")
 

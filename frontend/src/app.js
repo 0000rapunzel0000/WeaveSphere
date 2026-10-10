@@ -46,7 +46,7 @@ const ENUM={dept:['Office','QC','Production','Dispatch','Accounts'],intent:['sta
 const REVIEW_FIELDS={message:['dept','intent','urgency'],breakdown:['category','severity'],defect:['defect_type','stage_at_fault','severity']};
 const label=s=>String(s??'').replaceAll('_',' ');
 
-let role='Owner',page='Dashboard',me=null,lang='en',currentOrder='',currentToken='',traceRoll='',pendingRoll='',editMasterId='',masterKey='buyers',reportMonth=thisMonth(),flash='',afterRender=null,renderSeq=0,toastTimer=null;
+let orderBuyer={},machineOrder={},role='Owner',page='Dashboard',me=null,lang='en',currentOrder='',currentToken='',traceRoll='',pendingRoll='',editMasterId='',masterKey='buyers',reportMonth=thisMonth(),flash='',afterRender=null,renderSeq=0,toastTimer=null;
 try{lang=localStorage.getItem('everest-lang')||'en'}catch{}
 
 // ---------- Master data (read by every page for names) ----------
@@ -60,7 +60,7 @@ const optional=(items,none='— none —')=>[['',none],...items];
 const orderChoices=orders=>orders.map(o=>[o.id,`#${o.id} · ${o.buyer||nameOf(M.buyers,o.buyer_id)} · ${o.colour}`]);
 
 // ---------- UI helpers ----------
-const toast=text=>{const t=$('#toast');t.textContent=text;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3200)};
+const toast=(text,kind)=>{const t=$('#toast');t.textContent=text;t.classList.toggle('error',kind==='error');t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3200)};
 function field(lbl,name,placeholder='',type='text',value='',required=true){const extra=type==='number'?' step="any" min="0"':'';return`<label class="field"><span>${esc(lbl)}</span><input name="${esc(name)}" type="${type}" placeholder="${esc(placeholder)}" value="${esc(value)}"${extra} ${required?'required':''}></label>`}
 function select(lbl,name,items,selected='',required=true){return`<label class="field"><span>${esc(lbl)}</span><select name="${esc(name)}" ${required?'required':''}>${items.map(([v,t])=>`<option value="${esc(v)}" ${String(v)===String(selected)?'selected':''}>${esc(t)}</option>`).join('')}</select></label>`}
 function textarea(lbl,name,placeholder='',required=false){return`<label class="field"><span>${esc(lbl)}</span><textarea name="${esc(name)}" placeholder="${esc(placeholder)}" ${required?'required':''}></textarea></label>`}
@@ -75,7 +75,7 @@ const monthForm=()=>`<form data-form="month" class="inline-actions"><input type=
 function aiLine(r,what){if(!r)return'';if(!r.confidence)return'The AI is unavailable, so this went to <b>AI review</b> for a person to decide.';const s=Object.entries(r.suggestion||{}).map(([k,v])=>`${label(k)}: <b>${esc(label(v))}</b>`).join(' · ');return r.auto?`Jev ${what}: ${s} <span class="mono">(${pct(r.confidence)})</span>`:`Jev was not sure (${pct(r.confidence)}), so this went to <b>AI review</b>. Suggestion: ${s||'none'}`}
 function lowStockLine(list){return list?.length?`<b>LOW STOCK</b>: ${list.map(y=>`${esc(yarnName(y))} (${num(y.stock_kg)} kg, reorder at ${num(y.reorder_kg)})`).join(', ')}`:''}
 
-function navRender(){const nav=$('#sideNav');const groups=role==='Buyer'?[['BUYER PORTAL',['Tracking']]]:navGroups;nav.innerHTML=groups.map(([g,items])=>{const vis=items.filter(x=>allowed[role].includes(x));return vis.length?`<div class="nav-label">${g}</div>`+vis.map(n=>`<button class="nav-item ${page===n?'active':''}" data-page="${n}"><span class="nav-icon">${icons[n]}</span>${lang==='ta'?tamil[n]:n}</button>`).join(''):''}).join('');$('#roleName').textContent=(me?.username?me.username+' · ':'')+role.toUpperCase();$('#pageCrumb').textContent=page.toUpperCase()}
+function navRender(){const nav=$('#sideNav');const groups=role==='Buyer'?[['BUYER PORTAL',['Tracking']]]:navGroups;nav.innerHTML=groups.map(([g,items])=>{const vis=items.filter(x=>allowed[role].includes(x));return vis.length?`<div class="nav-label">${g}</div>`+vis.map(n=>`<button class="nav-item ${page===n?'active':''}" data-page="${n}"><span class="nav-icon">${icons[n]}</span>${lang==='ta'?tamil[n]:n}</button>`).join(''):''}).join('');$('#roleName').textContent=(me?.username?me.username+' · ':'')+role.toUpperCase();$('#userChip').textContent=(me?.username?me.username+' · ':'')+role.toUpperCase();$('#pageCrumb').textContent=page.toUpperCase()}
 
 // ---------- Pages ----------
 async function dashboard(){
@@ -87,7 +87,7 @@ async function dashboard(){
   `<div class="grid four">${kpi('TODAY’S OUTPUT',num(out)+' m','PRODUCTION ENTRIES')}${kpi('MACHINES RUNNING',`${running} / ${m.length}`,`${floor.idle_count} NOT RUNNING · ${m.filter(x=>x.status==='Breakdown').length} BREAKDOWN`)}${kpi('ORDERS IN PROGRESS',orders.filter(o=>!['Pending','Ready','Dispatched'].includes(o.stage)).length,'LIVE ORDER BOOK')}${kpi('QC QUEUE',queue.length,`${low} LOW STOCK ALERTS`,low?'warn':'')}</div>`+
   `<div style="margin-top:11px">${panel('Output today by machine',table(['MACHINE','STAGE','OUTPUT'],outRows,'No production recorded today yet.'),'FROM SHIFT ENTRIES')}</div>`+
   `<section class="panel" style="margin-top:11px"><div class="panel-head"><h2>Machine status board</h2><span class="mono">LIVE FROM THE FLOOR</span></div><div class="machine-grid">${cards||'<div class="empty">Add machines in Masters.</div>'}</div></section>`+
-  `<div class="dashboard-grid">${panel('Orders needing attention',table(['ORDER','BUYER','DEADLINE','STAGE','PROGRESS','RISK'],orders.filter(o=>o.stage!=='Dispatched').slice(0,6).map(o=>`<tr><td class="mono-cell">#${o.id}</td><td>${esc(o.buyer)}</td><td>${esc(o.deadline)}</td><td>${badge(o.stage)}</td><td>${o.progress_pct}%</td><td>${isLate(o)?badge('Overdue'):badge('On plan')}</td></tr>`),'No open orders.'),`<button class="inline-actions" data-page="Orders">VIEW ALL ↗</button>`)}${panel('Stock watch',table(['YARN','ON HAND','REORDER','STATUS'],stock.filter(y=>y.reorder_kg&&y.stock_kg<y.reorder_kg*1.35).map(y=>`<tr><td>${esc(yarnName(y))}</td><td>${num(y.stock_kg)} kg</td><td>${num(y.reorder_kg)} kg</td><td>${badge(y.low?'Low stock':'Watch')}</td></tr>`),'All yarns above watch level.'),'REORDER POINTS')}</div>`;
+  `<div class="dashboard-grid">${panel('Orders needing attention',table(['ORDER','BUYER','DEADLINE','STAGE','PROGRESS','RISK'],orders.filter(o=>o.stage!=='Dispatched').slice(0,6).map(o=>`<tr><td class="mono-cell">#${o.id}</td><td>${esc(o.buyer)}</td><td>${esc(o.deadline)}</td><td>${badge(o.stage)}</td><td>${o.progress_pct}%</td><td>${isLate(o)?badge('Overdue'):badge('On plan')}</td></tr>`),'No open orders.'),`<div class="inline-actions"><button data-page="Orders">VIEW ALL ↗</button></div>`)}${panel('Stock watch',table(['YARN','ON HAND','REORDER','STATUS'],stock.filter(y=>y.reorder_kg&&y.stock_kg<y.reorder_kg*1.35).map(y=>`<tr><td>${esc(yarnName(y))}</td><td>${num(y.stock_kg)} kg</td><td>${num(y.reorder_kg)} kg</td><td>${badge(y.low?'Low stock':'Watch')}</td></tr>`),'All yarns above watch level.'),'REORDER POINTS')}</div>`;
 }
 async function roleDashboard(){
  if(role==='Owner')return dashboard();
@@ -100,7 +100,7 @@ async function roleDashboard(){
 
 async function orderPage(){
  const orders=await api('/orders');
- const rows=orders.map(o=>`<tr><td class="mono-cell">#${o.id}<span class="sub">${esc(o.colour)} · ${num(o.qty_m)} m</span></td><td>${esc(o.buyer)}</td><td>${esc(o.fabric)}<span class="sub">${money(o.price_per_m)} / m</span></td><td>${esc(o.deadline)}</td><td>${badge(o.stage)}</td><td>${o.progress_pct}%<span class="sub">${num(o.passed_m)} m passed</span></td><td>${isLate(o)?badge('Overdue'):badge('On plan')}</td><td><div class="inline-actions"><button data-act="order-link" data-token="${esc(o.token)}">TRACK LINK</button><button data-act="feasibility" data-id="${o.id}">YARN</button><button data-act="risk" data-id="${o.id}">RISK</button></div></td></tr>`);
+ const rows=orders.map(o=>`<tr><td class="mono-cell">#${o.id}<span class="sub">${esc(o.colour)} · ${num(o.qty_m)} m</span></td><td>${esc(o.buyer)}</td><td>${esc(o.fabric)}<span class="sub">${money(o.price_per_m)} / m</span></td><td>${esc(o.deadline)}</td><td>${badge(o.stage)}</td><td>${o.progress_pct}%<span class="sub">${num(o.passed_m)} m passed</span></td><td>${isLate(o)?badge('Overdue'):badge('On plan')}</td><td><div class="inline-actions"><button data-act="open-track" data-id="${o.id}">VIEW</button><button data-act="order-link" data-token="${esc(o.token)}">TRACK LINK</button><button data-act="feasibility" data-id="${o.id}">YARN</button><button data-act="risk" data-id="${o.id}">RISK</button></div></td></tr>`);
  const can=['Owner','Office / Admin'].includes(role);
  return head('Buyer orders','ORDER MANAGEMENT')+
   (can?formStart('order','Create a buyer order',select('BUYER','buyer_id',choices(M.buyers))+select('FABRIC','fabric_type_id',choices(M.fabric_types))+field('COLOUR','colour','e.g. Indigo')+field('QUANTITY (M)','qty_m','','number')+field('DEADLINE','deadline','','date',today())+field('PRICE PER METRE (₹)','price_per_m','','number'),'CREATE ORDER · CHECK YARN'):'')+
@@ -121,6 +121,7 @@ async function inventoryPage(){
 
 async function productionPage(){
  const [floor,orders,entries]=await Promise.all([api('/floor'),api('/orders'),api('/production')]);
+ machineOrder=Object.fromEntries(floor.machines.filter(m=>m.order_id).map(m=>[m.id,m.order_id]));
  const openOrders=orderChoices(orders.filter(o=>!['Ready','Dispatched'].includes(o.stage)));
  const cards=floor.machines.map(m=>`<article class="machine-card"><div class="machine-top"><strong>${esc(m.name)}</strong><span class="status-dot ${m.status==='Breakdown'?'bad':m.idle?'warn':''}"></span></div><small>${esc(m.kind)} · ${m.order_id?'ORDER #'+m.order_id+' · '+m.order_progress_pct+'%':'NO ORDER'} · TODAY ${num(m.today_output)}</small><label class="field" style="margin-top:10px"><span>ONE-TAP STATUS</span><select data-machine-status="${m.id}">${['Running','Idle','Breakdown','Maintenance'].map(s=>`<option ${s===m.status?'selected':''}>${s}</option>`).join('')}</select></label><label class="field" style="margin-top:6px"><span>ASSIGN ORDER</span><select data-machine-order="${m.id}"><option value="">${m.order_id?'#'+m.order_id+' (current)':'Choose an order…'}</option>${openOrders.filter(([id])=>id!==m.order_id).map(([v,t])=>`<option value="${v}">${esc(t)}</option>`).join('')}</select></label></article>`).join('');
  const people=select('MACHINE','machine_id',choices(M.machines,m=>`${m.name} · ${m.kind}`))+select('ORDER','order_id',openOrders)+select('OPERATOR','operator_id',choices(M.workers))+select('SHIFT','shift_id',choices(M.shifts));
@@ -131,7 +132,7 @@ async function productionPage(){
 
 async function qualityPage(){
  const [queue,fg]=await Promise.all([api('/qc/queue'),api('/finished-goods')]);
- const rows=queue.map(r=>`<tr><td class="mono-cell">${esc(r.qr)}</td><td>#${r.order_id}</td><td>${esc(r.machine)}</td><td>${num(r.metres)} m</td><td>${badge(r.status)}</td><td><div class="inline-actions"><button data-act="scan-roll" data-qr="${esc(r.qr)}">INSPECT</button><button data-act="trace" data-qr="${esc(r.qr)}">TRACE</button></div></td></tr>`);
+ const rows=queue.map(r=>`<tr><td class="mono-cell">${esc(r.qr)}</td><td>#${r.order_id}</td><td>${esc(r.machine)}</td><td>${num(r.metres)} m</td><td>${badge(r.status)}</td><td><div class="inline-actions"><button data-act="qc-pass" data-qr="${esc(r.qr)}">PASS</button><button data-act="scan-roll" data-qr="${esc(r.qr)}">INSPECT</button><button data-act="trace" data-qr="${esc(r.qr)}">TRACE</button></div></td></tr>`);
  const fields=field('ROLL QR','qr','Scan or type e.g. ETM-…')+select('RESULT','result',[['pass','Pass'],['rework','Rework'],['reject','Reject']])+select('DEFECT TYPE','defect_type',optional(ENUM.defect_type.map(d=>[d,label(d)]),'Let Jev decide from the notes'),'',false)+textarea('NOTES','notes','What did you see? Needed for rework / reject.');
  return head('Quality control','ROLL INSPECTION / TRACEABILITY')+'<div class="grid three">'+kpi('WAITING FOR QC',queue.filter(r=>r.status==='pending_qc').length,'NEW ROLLS')+kpi('REWORK LOOP',queue.filter(r=>r.status==='rework').length,'BACK FOR RE-INSPECTION')+kpi('PASSED IN STORE',fg.reduce((s,x)=>s+x.rolls,0),num(fg.reduce((s,x)=>s+x.metres,0))+' M READY TO SHIP')+'</div><div class="split" style="margin-top:11px">'+formStart('qc','Scan roll · record inspection',fields,'SAVE QC RESULT','NOTES → JEV CLASSIFIES THE DEFECT')+panel('QC queue',table(['ROLL','ORDER','MACHINE','QTY','STATUS','ACTION'],rows,'No rolls waiting for inspection.')+'<div class="notice">Rework returns to this queue. Rejected rolls are blocked from dispatch.</div>','SCAN → RESULT → TRACE')+'</div>';
 }
@@ -148,9 +149,9 @@ async function tracePage(){
 
 async function dispatchPage(){
  const [orders,fg,ds]=await Promise.all([api('/orders'),api('/finished-goods'),api('/dispatches')]);
- const open=await Promise.all(ds.filter(d=>d.status==='open').map(d=>api('/dispatches/'+d.id)));
+ const open=await Promise.all(ds.filter(d=>d.status==='open').map(async d=>{const [detail,passed]=await Promise.all([api('/dispatches/'+d.id),api(`/rolls?order_id=${d.order_id}&status=passed`)]);const loaded=new Set(detail.packing_list.map(p=>p.qr));return{...detail,waiting:passed.filter(r=>!loaded.has(r.qr))}}));
  const ready=orderChoices(orders.filter(o=>o.stage!=='Dispatched'&&fg.some(f=>f.order_id===o.id)));
- const trucks=open.map(d=>`<section class="panel" style="margin-top:11px"><div class="panel-head"><h2>Truck ${esc(d.vehicle_no)} · ${esc(d.driver)}</h2><span class="mono">DISPATCH ${d.id} · ORDER #${d.order_id} · ${esc(d.buyer)}</span></div><form data-form="scan" class="form-grid two"><input type="hidden" name="did" value="${d.id}"><label class="field"><span>SCAN ROLL QR ONTO THIS TRUCK</span><input name="qr" placeholder="ETM-…" required autofocus></label><div class="form-actions" style="align-items:end"><button class="primary">ADD ROLL</button><button type="button" class="secondary" data-act="close-dispatch" data-id="${d.id}">CLOSE TRUCK & INVOICE</button></div></form>${table(['ROLL','METRES'],d.packing_list.map(p=>`<tr><td class="mono-cell">${esc(p.qr)}</td><td>${num(p.metres)} m</td></tr>`),'No rolls scanned yet.')}<p class="help">${d.rolls} rolls · ${num(d.metres)} m on this truck.</p></section>`).join('');
+ const trucks=open.map(d=>`<section class="panel" style="margin-top:11px"><div class="panel-head"><h2>Truck ${esc(d.vehicle_no)} · ${esc(d.driver)}</h2><span class="mono">DISPATCH ${d.id} · ORDER #${d.order_id} · ${esc(d.buyer)}</span></div><form data-form="scan" class="form-grid two"><input type="hidden" name="did" value="${d.id}"><label class="field"><span>SCAN ROLL QR ONTO THIS TRUCK</span><input name="qr" placeholder="ETM-…" required autofocus></label><div class="form-actions" style="align-items:end"><button class="primary">ADD ROLL</button><button type="button" class="secondary" data-act="close-dispatch" data-id="${d.id}">CLOSE TRUCK & INVOICE</button></div></form>${d.waiting.length?`<p class="help">Or tap a passed roll of order #${d.order_id} to load it:</p><div class="pick-list">${d.waiting.map(r=>`<button type="button" data-act="load-roll" data-id="${d.id}" data-qr="${esc(r.qr)}">${esc(r.qr)} · ${num(r.metres)} m</button>`).join('')}</div>`:`<p class="help">No more passed rolls of order #${d.order_id} waiting.</p>`}${table(['ROLL','METRES'],d.packing_list.map(p=>`<tr><td class="mono-cell">${esc(p.qr)}</td><td>${num(p.metres)} m</td></tr>`),'No rolls scanned yet.')}<p class="help">${d.rolls} rolls · ${num(d.metres)} m on this truck.</p></section>`).join('');
  const fgRows=fg.map(f=>`<tr><td class="mono-cell">#${f.order_id}</td><td>${esc(f.buyer)}</td><td>${esc(f.fabric)} · ${esc(f.colour)}</td><td>${f.rolls}</td><td>${num(f.metres)} m</td></tr>`);
  const hist=ds.map(d=>`<tr><td class="mono-cell">${d.id}</td><td>${esc(d.created_at)}</td><td>#${d.order_id} · ${esc(d.buyer)}</td><td>${esc(d.vehicle_no)} · ${esc(d.driver)}</td><td>${badge(d.status)}</td><td>${d.total==null?'—':money(d.total)}</td><td><div class="inline-actions"><button data-act="print-dispatch" data-id="${d.id}">PACKING LIST</button>${d.invoice_id?`<button data-act="print-invoice" data-id="${d.id}">INVOICE</button>`:''}</div></td></tr>`);
  return head('Finished goods & dispatch','PASSED ROLLS / SHIPMENTS')+'<div class="grid three">'+kpi('PASSED ROLLS IN STORE',fg.reduce((s,f)=>s+f.rolls,0),'READY TO SHIP')+kpi('TRUCKS LOADING',open.length,'OPEN DISPATCHES')+kpi('READY METRES',num(fg.reduce((s,f)=>s+f.metres,0))+' m','QC PASSED')+'</div>'+
@@ -176,15 +177,16 @@ async function trackingPage(){
 
 async function inboxPage(){
  const [msgs,orders]=await Promise.all([api('/messages'),api('/orders')]);
+ orderBuyer=Object.fromEntries(orders.map(o=>[o.id,o.buyer_id]));
  const fields=select('BUYER (OPTIONAL)','buyer_id',optional(choices(M.buyers)),'',false)+select('ORDER (OPTIONAL)','order_id',optional(orderChoices(orders)),'',false)+select('CHANNEL','channel',[['whatsapp','WhatsApp'],['email','Email'],['phone','Phone call']])+textarea('MESSAGE','text','Paste the buyer’s message',true);
  const rows=msgs.map(m=>`<tr><td>${esc(m.created_at)}<span class="sub">${esc(m.channel)}</span></td><td>${esc(nameOf(M.buyers,m.buyer_id))}${m.order_id?`<span class="sub">ORDER #${m.order_id}</span>`:''}</td><td>${esc(m.text)}${m.reply?`<span class="sub">REPLY: ${esc(m.reply)}</span>`:''}</td><td>${m.dept?`<b>${esc(m.dept)}</b><span class="sub">${esc(label(m.intent))} · ${esc(m.urgency)}</span>`:'—'}</td><td>${m.confidence==null?'—':pct(m.confidence)}</td><td>${badge(m.status)}</td><td><div class="inline-actions"><select data-lang-for="${m.id}" aria-label="Reply language"><option value="en">EN</option><option value="ta">TA</option><option value="hi">HI</option></select><button data-act="draft" data-id="${m.id}">DRAFT REPLY</button></div></td></tr>`);
  return head('Buyer inbox','JEV ROUTING / REPLY DRAFTS')+'<div class="grid three">'+kpi('MESSAGES',msgs.length,'ALL CHANNELS')+kpi('NEED A HUMAN',msgs.filter(m=>m.status==='review').length,'JEV WAS NOT SURE',msgs.some(m=>m.status==='review')?'warn':'')+kpi('REPLIED',msgs.filter(m=>m.status==='replied').length,'ANSWERED')+'</div>'+formStart('message','Log an incoming message',fields,'ROUTE WITH JEV','DEPARTMENT · INTENT · URGENCY')+panel('Messages',table(['RECEIVED','FROM','MESSAGE','ROUTED TO','CONFIDENCE','STATUS','REPLY'],rows,'No buyer messages yet.'),'REPLIES ARE RECORDED HERE; SEND THEM FROM WHATSAPP / EMAIL');
 }
 
 async function reviewsPage(){
- const items=await api('/reviews');
- const rows=items.map(r=>`<tr data-review="${r.id}"><td>${badge(r.kind)}<span class="sub">#${r.ref_id} · ${esc(r.created_at)}</span></td><td>${r.confidence?pct(r.confidence):'AI unavailable'}</td><td><div class="inline-actions">${REVIEW_FIELDS[r.kind].map(f=>`<label class="field"><span>${esc(label(f).toUpperCase())}</span><select data-field="${f}">${ENUM[f].map(v=>`<option value="${v}" ${r.suggestion[f]===v?'selected':''}>${esc(label(v))}</option>`).join('')}</select></label>`).join('')}</div></td><td><div class="inline-actions"><button data-act="review-save" data-id="${r.id}">SAVE</button></div></td></tr>`);
- return head('AI review queue','HUMAN IN THE LOOP')+panel('Waiting for a person',table(['ITEM','JEV CONFIDENCE','DECISION (JEV’S SUGGESTION PRESELECTED WHEN IT HAD ONE)','ACTION'],rows,'Nothing to review. Jev was confident about everything.'),'SAVE APPLIES THE VALUES SHOWN');
+ const [open,settled]=await Promise.all([api('/reviews'),api('/reviews?status=resolved')]);
+ const row=r=>{const cur=r.final||r.suggestion;return`<tr data-review="${r.id}"><td>${badge(r.kind)}<span class="sub">#${r.ref_id} · ${esc(r.created_at)}</span>${r.status==='resolved'?`<span class="sub">${r.final?'CHECKED BY A PERSON':'APPLIED AUTOMATICALLY'}</span>`:''}</td><td>${r.confidence?pct(r.confidence):'AI unavailable'}</td><td><div class="inline-actions">${REVIEW_FIELDS[r.kind].map(f=>`<label class="field"><span>${esc(label(f).toUpperCase())}</span><select data-field="${f}">${f in cur?'':'<option value="">— keep as is —</option>'}${ENUM[f].map(v=>`<option value="${v}" ${cur[f]===v?'selected':''}>${esc(label(v))}</option>`).join('')}</select></label>`).join('')}</div></td><td><div class="inline-actions"><button data-act="review-save" data-id="${r.id}">${r.status==='open'?'SAVE':'CORRECT'}</button></div></td></tr>`};
+ return head('AI review queue','HUMAN IN THE LOOP')+panel('Waiting for a person',table(['ITEM','JEV CONFIDENCE','DECISION (JEV’S SUGGESTION PRESELECTED WHEN IT HAD ONE)','ACTION'],open.map(row),'Nothing to review. Jev was confident about everything.'),'SAVE APPLIES THE VALUES SHOWN')+panel('Recent decisions',table(['ITEM','JEV CONFIDENCE','APPLIED VALUES','ACTION'],settled.slice(0,25).map(row),'No settled decisions yet.'),'WRONG? CHANGE IT AND PRESS CORRECT');
 }
 
 async function workforcePage(){
@@ -221,7 +223,7 @@ async function masterPage(){
  const [title,cols]=MASTERS[masterKey],data=M[masterKey],editing=byId(data,editMasterId),canEdit=['Owner','Office / Admin'].includes(role);
  const inputs=cols.map(([k,lbl,type='text',req])=>{const v=editing?.[k]??'';if(Array.isArray(type))return select(lbl,k,type.map(x=>[x,x]),v);if(type==='fabric_types')return select(lbl,k,choices(M.fabric_types),v);if(type==='yarn_types')return select(lbl,k,choices(M.yarn_types,yarnName),v);return field(lbl,k,'',type,v,!!req)}).join('');
  const tabs=Object.entries(MASTERS).map(([k,v])=>`<button class="tab-button master-tab ${k===masterKey?'active selected':''}" data-master="${k}">${v[0]}</button>`).join('');
- const rows=data.map(x=>`<tr><td class="mono-cell">${x.id}</td>${cols.map(([k,,type])=>`<td>${esc(refName(type,x[k]))}</td>`).join('')}${masterKey==='machines'?`<td>${badge(x.status)}</td>`:''}<td>${canEdit?`<button class="inline-actions" data-act="edit-master" data-id="${x.id}">EDIT</button>`:''}</td></tr>`);
+ const rows=data.map(x=>`<tr><td class="mono-cell">${x.id}</td>${cols.map(([k,,type])=>`<td>${esc(refName(type,x[k]))}</td>`).join('')}${masterKey==='machines'?`<td>${badge(x.status)}</td>`:''}<td>${canEdit?`<div class="inline-actions"><button data-act="edit-master" data-id="${x.id}">EDIT</button></div>`:''}</td></tr>`);
  return head('Master data','FACTORY DIRECTORY / RECIPES')+`<div class="tabs">${tabs}</div><section class="panel"><div class="panel-head"><h2>${title}</h2><span class="mono">${editing?'EDITING #'+editing.id:'SHARED WITH EVERY SCREEN'}</span></div>`+(canEdit?`<form class="form-grid" data-form="master">${inputs}<div class="form-actions"><button class="primary">${editing?'SAVE CHANGES':'ADD RECORD'}</button>${editing?'<button type="button" class="secondary" data-act="cancel-master-edit">CANCEL</button>':''}</div></form>`:'')+table(['ID',...cols.map(c=>c[1]),...(masterKey==='machines'?['STATUS']:[]),''],rows,'Nothing added yet.')+'</section>';
 }
 
@@ -235,10 +237,12 @@ const pages={Dashboard:roleDashboard,Orders:orderPage,Production:productionPage,
 async function render(){
  if(!allowed[role].includes(page))page=role==='Buyer'?'Tracking':'Dashboard';
  navRender();
- const seq=++renderSeq;let html;
+ const seq=++renderSeq;let html;document.body.classList.add('busy');
  try{html=await pages[page]()}catch(e){html=head(page,'COULD NOT LOAD')+`<div class="alert">${esc(e.message)}</div>`}
  if(seq!==renderSeq)return;
+ document.body.classList.remove('busy');
  $('#view').innerHTML=(flash?`<div class="notice" style="margin-bottom:11px">${flash}</div>`:'')+html;flash='';
+ $$('#view .table').forEach(t=>{const h=[...t.querySelectorAll('th')].map(th=>th.textContent.trim());t.querySelectorAll('tbody tr').forEach(tr=>[...tr.children].forEach((td,i)=>td.dataset.label=h[i]||''))});
  $('#lastSaved').textContent='UPDATED '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
  if(afterRender){const f=afterRender;afterRender=null;f()}
 }
@@ -280,7 +284,7 @@ const handlers={
 async function submit(form,e){
  e.preventDefault();const type=form.dataset.form,btn=form.querySelector('button.primary');if(btn)btn.disabled=true;
  try{const msg=await handlers[type](formData(form),form);await render();if(msg)toast(msg)}
- catch(err){toast(err.message||'Could not save this entry.')}
+ catch(err){toast(err.message||'Could not save this entry.','error')}
  finally{if(btn)btn.disabled=false}
 }
 
@@ -299,30 +303,32 @@ async function action(act,el){
   if(act==='edit-master'){editMasterId=id;return render()}
   if(act==='cancel-master-edit'){editMasterId='';return render()}
   if(act==='order-link')return copyLink(el.dataset.token);
-  if(act==='open-track'){currentOrder=id;return render()}
+  if(act==='open-track'){currentOrder=id;if(page!=='Tracking')return setPage('Tracking');return render()}
   if(act==='feasibility'){const f=await api(`/orders/${id}/feasibility`);$('#feasibilityResult').innerHTML=`<b>ORDER #${id}: ${esc(f.verdict.toUpperCase())}</b><br>`+f.lines.map(l=>`${esc(l.count)} ${esc(l.material)} · ${esc(l.colour)}: need ${num(l.required_kg)} kg · issued ${num(l.issued_kg)} · in stock ${num(l.available_kg)}${l.short_kg?` · <b class="warn">SHORT ${num(l.short_kg)} kg</b>`:''}`).join('<br>');return}
   if(act==='risk'){$('#feasibilityResult').textContent='Asking Jev…';const r=await api(`/orders/${id}/risk`);$('#feasibilityResult').innerHTML=r.probability==null?`Order #${id}: risk unknown (AI unavailable). ${r.progress_pct}% done, ${r.days_left} days left, yarn short ${num(r.yarn_short_kg)} kg.`:`<b>ORDER #${id}: ${r.at_risk?'AT RISK':'ON TRACK'}</b> · Jev puts the chance of missing the deadline at <b>${pct(r.probability)}</b>.<br>${r.progress_pct}% done · ${r.days_left} days left · yarn short ${num(r.yarn_short_kg)} kg · ${r.free_machines} idle machines`;return}
-  if(act==='scan-roll'){const f=$('form[data-form=qc] [name=qr]');if(f){f.value=el.dataset.qr;f.focus()}return}
+  if(act==='scan-roll'){const form=$('form[data-form=qc]');if(form){form.elements.qr.value=el.dataset.qr;form.elements.result.value='reject';form.scrollIntoView({behavior:'smooth',block:'start'});form.elements.notes.focus({preventScroll:true})}return}
+  if(act==='qc-pass'){await post('/qc/'+encodeURIComponent(el.dataset.qr),{result:'pass'});await render();return toast('Roll '+el.dataset.qr+' passed.')}
   if(act==='trace'){traceRoll=el.dataset.qr;return setPage('Traceability')}
   if(act==='roll-qr')return qrModal({qr:el.dataset.qr,order_id:el.dataset.order,metres:el.dataset.metres,status:el.dataset.status});
   if(act==='close-dispatch'){if(!confirm('Close this truck and raise the invoice? No more rolls can be added.'))return;const d=await post(`/dispatches/${id}/close`);flash=`Dispatch ${d.id} closed · invoice INV-${String(d.invoice.id).padStart(5,'0')} for <b>${money(d.invoice.total)}</b> (${d.rolls} rolls, ${num(d.metres)} m).`;await render();return dispatchModal(id,'invoice')}
+  if(act==='load-roll'){try{await post(`/dispatches/${id}/scan`,{qr:el.dataset.qr})}catch(e){flash=`<b>${esc(e.message)}</b>`;await render();throw e}await render();return toast('Roll '+el.dataset.qr+' loaded.')}
   if(act==='print-invoice')return dispatchModal(id,'invoice');
   if(act==='print-dispatch')return dispatchModal(id,'packing');
   if(act==='draft'){const l=$(`[data-lang-for="${id}"]`)?.value||'en';toast('Drafting reply from live order data…');const r=await post(`/messages/${id}/draft`,{lang:l});$('#modalContent').innerHTML=`<div class="eyebrow"><i></i> REPLY DRAFT · ${esc(l.toUpperCase())}</div><h2>Check, edit, then send</h2><label class="field"><span>REPLY</span><textarea id="replyText" rows="6">${esc(r.draft)}</textarea></label><p class="help">Copy it into WhatsApp or email, then mark it as sent so the inbox knows it was answered.</p><div class="form-actions"><button type="button" class="secondary" data-act="copy-reply">COPY</button><button type="button" class="primary" data-act="send-reply" data-id="${id}">MARK AS SENT</button></div>`;$('#modal').showModal();return}
   if(act==='copy-reply'){navigator.clipboard?.writeText($('#replyText').value).then(()=>toast('Reply copied.'));return}
   if(act==='send-reply'){await post(`/messages/${id}/reply`,{text:$('#replyText').value});$('#modal').close();await render();return toast('Reply recorded.')}
-  if(act==='review-save'){const row=el.closest('[data-review]'),fields=Object.fromEntries([...row.querySelectorAll('[data-field]')].map(s=>[s.dataset.field,s.value]));const r=await post(`/reviews/${id}`,fields);await render();return toast('Applied: '+Object.entries(r.applied).map(([k,v])=>label(k)+' '+label(v)).join(', '))}
- }catch(e){toast(e.message)}
+  if(act==='review-save'){const row=el.closest('[data-review]'),fields=Object.fromEntries([...row.querySelectorAll('[data-field]')].filter(s=>s.value).map(s=>[s.dataset.field,s.value]));const r=await post(`/reviews/${id}`,fields);await render();return toast('Applied: '+Object.entries(r.applied).map(([k,v])=>label(k)+' '+label(v)).join(', '))}
+ }catch(e){toast(e.message,'error')}
 }
 async function machineStatus(id,status,el){
  let note=null;
  if(status==='Breakdown'){note=prompt('What happened? Jev will triage it. (Leave empty to skip triage.)')||null}
  try{const r=await post(`/machines/${id}/status`,{status,note});if(r.triage)flash=`${esc(nameOf(M.machines,id))}: `+aiLine(r.triage,'triage')+(r.log.assignee?` · send: <b>${esc(r.log.assignee)}</b>`:'');await render();toast(nameOf(M.machines,id)+' → '+status)}
- catch(e){toast(e.message);render()}
+ catch(e){toast(e.message,'error');render()}
 }
 
 // ---------- Export / language ----------
-function doCSV(){const rows=$$('#view .table tbody tr').map(tr=>[...tr.children].map(td=>td.innerText.trim()));const csv=[['EVEREST TEXTILE MILLS',page,today()],...rows].map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\r\n'),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=`everest-${page.toLowerCase()}-${today()}.csv`;a.click();URL.revokeObjectURL(a.href)}
+function doCSV(){const rows=$$('#view .table tbody tr').map(tr=>[...tr.children].map(td=>td.innerText.trim()));const csv=[['EVEREST TEXTILE MILLS',page,today()],...rows].map(r=>r.map(v=>{v=String(v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return'"'+v.replaceAll('"','""')+'"'}).join(',')).join('\r\n'),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=`everest-${page.toLowerCase()}-${today()}.csv`;a.click();URL.revokeObjectURL(a.href)}
 function switchLanguage(next){lang=next;try{localStorage.setItem('everest-lang',lang)}catch{}navRender();toast(lang==='ta'?'தமிழ் வழிசெலுத்தல் இயக்கப்பட்டது':'English navigation enabled')}
 
 // ---------- Sign in / out ----------
@@ -359,7 +365,7 @@ async function firstSetup(){
  if(!username||password.length<8)return showAuthMessage('Type the owner username and a password of at least 8 characters first.');
  try{const r=await post('/auth/setup',{username,password});await startSession(r.token);toast('Owner account created.')}catch(err){showAuthMessage(err.message)}
 }
-function signOut(){if(token)fetch(API+'/auth/logout',{method:'POST',headers:{Authorization:'Bearer '+token}}).catch(()=>{});token=null;me=null;store.set('everest-token',null);currentOrder='';currentToken='';$('#app').classList.add('hidden');$('#gate').classList.remove('hidden');showGate()}
+function signOut(){if(token)fetch(API+'/auth/logout',{method:'POST',headers:{Authorization:'Bearer '+token}}).catch(()=>{});token=null;me=null;store.set('everest-token',null);currentOrder='';currentToken='';if(!$('#app').classList.contains('hidden')){$('#app').classList.add('hidden');$('#gate').classList.remove('hidden');showGate()}}
 
 // ---------- Events ----------
 $('#sideNav').addEventListener('click',e=>{const b=e.target.closest('[data-page]');if(b)setPage(b.dataset.page)});
@@ -369,7 +375,13 @@ $('#view').addEventListener('submit',e=>{const f=e.target.closest('form[data-for
 $('#view').addEventListener('change',async e=>{
  const s=e.target.dataset.machineStatus,o=e.target.dataset.machineOrder;
  if(s)return machineStatus(s,e.target.value,e.target);
- if(o&&e.target.value){try{await post('/jobs',{order_id:+e.target.value,machine_id:+o});await render();toast('Job card assigned.')}catch(err){toast(err.message)}return}
+ const form=e.target.form;
+ if(form?.dataset.form==='message'){
+  if(e.target.name==='order_id'&&e.target.value)form.elements.buyer_id.value=orderBuyer[e.target.value]??'';
+  if(e.target.name==='buyer_id'&&form.elements.order_id.value&&String(orderBuyer[form.elements.order_id.value])!==e.target.value)form.elements.order_id.value='';
+  return}
+ if(form&&['production','breakdown'].includes(form.dataset.form)&&e.target.name==='machine_id'&&form.elements.order_id){const o=machineOrder[e.target.value];if(o&&[...form.elements.order_id.options].some(x=>x.value==String(o)))form.elements.order_id.value=o;return}
+ if(o&&e.target.value){try{await post('/jobs',{order_id:+e.target.value,machine_id:+o});await render();toast('Job card assigned.')}catch(err){toast(err.message,'error')}return}
  if(e.target.matches('[data-challan]')&&e.target.files[0]){
   const file=e.target.files[0],form=e.target.closest('form');toast('Reading the challan…');
   const b64=await new Promise((ok,bad)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]);r.onerror=bad;r.readAsDataURL(file)});
@@ -379,6 +391,8 @@ $('#view').addEventListener('change',async e=>{
 $('#exportButton').addEventListener('click',doCSV);
 $('#printButton').addEventListener('click',()=>window.print());
 $('#roleSwitch').addEventListener('click',signOut);
+$('#topSignOut').addEventListener('click',signOut);
+$('#topLang').addEventListener('click',()=>switchLanguage(lang==='en'?'ta':'en'));
 $('#languageToggle').addEventListener('click',()=>switchLanguage(lang==='en'?'ta':'en'));
 $('#loginForm').addEventListener('submit',submitLogin);
 $('#gate').addEventListener('click',e=>{
@@ -422,7 +436,7 @@ function initLoomJourney(){
  if(!canvas||!journey)return;
  const ctx=canvas.getContext('2d');if(!ctx)return;
  const state={progress:0,width:0,height:0,dpr:1};
- const chapterLabels=['YARN LOT · COLOUR · STOCK','WARP · TENSION · PREPARATION','MACHINE · SHIFT · OUTPUT','ROLL ID · INSPECTION · TRACE'];
+ const chapterLabels=['CHALLAN · SUPPLIER · RATE','RECIPE · SHELF · PROMISED','OPERATOR · METRES · HOURS','LABEL · BENCH · LOADING BAY'];
  const clamp=(value,min=0,max=1)=>Math.max(min,Math.min(max,value));
  function resize(){
   const rect=canvas.getBoundingClientRect();state.dpr=Math.min(window.devicePixelRatio||1,2);state.width=rect.width;state.height=rect.height;
@@ -476,7 +490,7 @@ function initLoomJourney(){
   ctx.fillStyle='#f8f2e9';ctx.strokeStyle=copper;ctx.lineWidth=2;ctx.beginPath();ctx.arc(beadX,beadY,5,0,Math.PI*2);ctx.fill();ctx.stroke();
   if(weave>.03){
    const shuttleT=(weave*8)%1,shuttleX=loomLeft+14+(loomW-28)*(Math.floor(weave*8)%2?1-shuttleT:shuttleT),shuttleY=loomTop+18+(loomBottom-loomTop-36)*clamp(weave);
-   ctx.save();ctx.translate(shuttleX,shuttleY);ctx.fillStyle='#493e33';ctx.strokeStyle='#f1d0a5';ctx.lineWidth=1;ctx.beginPath();ctx.roundRect(small?-18:-26,-7,small?36:52,14,7);ctx.fill();ctx.stroke();ctx.restore();
+   ctx.save();ctx.translate(shuttleX,shuttleY);ctx.fillStyle='#493e33';ctx.strokeStyle='#f1d0a5';ctx.lineWidth=1;ctx.beginPath();if(ctx.roundRect)ctx.roundRect(small?-18:-26,-7,small?36:52,14,7);else ctx.rect(small?-18:-26,-7,small?36:52,14);ctx.fill();ctx.stroke();ctx.restore();
   }
   // The finished length winds into a roll after inspection and traceability appear.
   if(finish>0){

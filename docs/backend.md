@@ -21,6 +21,7 @@ npm run dev                       # http://localhost:5173, proxies /api/* to the
 - The frontend calls the API at `/api`. For a deployed build, either serve the API under `/api` on the same host, or set `window.EVEREST_API = "https://api.example.com"` before `src/app.js` loads.
 - CORS allows `http://localhost:5173` (the Vite dev server). To allow other addresses, set `CORS_ORIGINS` to a comma-separated list, for example `CORS_ORIGINS=http://localhost:5173,https://mill.example.com`.
 - AI is optional and runs entirely on OpenRouter. Set `OPENROUTER_API_KEY` to turn it on. Jev (`typesafe/jev-1.13`) makes the decisions, and a chat model (`CHAT_MODEL`, default `google/gemini-2.5-flash`) drafts replies and reads challan photos. Without a key, every AI decision goes to the human review queue, the risk endpoint returns `null`, and the reply-draft and challan-photo endpoints return `503`.
+- Settings can live in `backend/.env` (git-ignored), one `KEY=value` per line, e.g. `OPENROUTER_API_KEY=…` and `AI_THRESHOLD=0.7`. The backend loads it at start-up; real environment variables win.
 
 ## Conventions
 
@@ -31,7 +32,8 @@ npm run dev                       # http://localhost:5173, proxies /api/* to the
 
 | Code | Meaning |
 |---|---|
-| 401 | Not logged in or bad token. Go to login. |
+| 401 | Not logged in, bad token, or the session has expired (after `SESSION_HOURS`, default 24). Go to login. |
+| 429 | Too many failed sign-ins for that username (5 in 15 minutes). The message says how long to wait. |
 | 403 | Your role can't do this. |
 | 404 | Not found (for example a bad QR code). |
 | 409 | A business rule blocked it, such as insufficient stock, a blocked dispatch scan, a roll not awaiting QC, or a review already resolved. Also returned for a duplicate (`Already exists: …`) or a reference to a record that doesn't exist. |
@@ -82,7 +84,7 @@ Use `GET /me` after login to get `{id, username, role}` and choose which screens
 | Method | Path | Body | Notes |
 |---|---|---|---|
 | POST | `/auth/setup` | `{username, password}` | Creates the first owner. Works **only once**, on an empty database. Returns the same response as login. |
-| POST | `/auth/login` | `{username, password}` | Returns `{token, role, username}` |
+| POST | `/auth/login` | `{username, password}` | Returns `{token, role, username}`. Sessions last `SESSION_HOURS` (default 24). Five wrong passwords lock that username for 15 minutes (`429`). |
 | POST | `/auth/logout` | none | Invalidates the token |
 | GET | `/me` | none | `{id, username, role}` |
 | POST | `/users` | `{username, password (min 8), role}` | Admin or owner. Only an owner can create another owner. |
@@ -132,6 +134,7 @@ Unknown fields return `422`. Duplicates and bad foreign keys return `409`.
   // tracking fields (same as the public tracking link):
   "order_no": 1, "fabric": "Poplin", "stage": "Weaving",
   "target_m": 1000, "produced_m": 500, "passed_m": 500,  // produced_m includes fabric still on the loom
+  "dispatched_m": 0,          // shipped so far; stage is "Dispatched" only when this reaches target_m
   "rolls_produced": 2, "rolls_passed": 1, "progress_pct": 50.0,  // produced_m / target_m
   "expected_ready": "2026-10-20",   // from the last 7 days of production; null if there was none
   "dispatches": [{ "id", "vehicle_no", "driver", "status", "created_at", "rolls", "metres" }],
@@ -167,7 +170,7 @@ Unknown fields return `422`. Duplicates and bad foreign keys return `409`.
 |---|---|---|---|
 | POST | `/grn` | `{supplier_id, yarn_type_id, qty_kg, rate, order_id?, challan_no?}` | `{grn, stock, low_stock: [...]}`. Show an alert if `low_stock` is non-empty. |
 | GET | `/grn` | none | GRN list with the `supplier` name |
-| POST | `/grn/challan` | `{image_b64, mime: "image/jpeg"}` | `{extracted: {...}, suggested: {supplier_id, yarn_type_id, qty_kg, rate, challan_no}}`. Pre-fill the GRN form from `suggested` (ids may be null), let the store keeper confirm, then `POST /grn`. |
+| POST | `/grn/challan` | `{image_b64, mime}` (`image/jpeg`, `image/png`, `image/webp` or `image/heic`; up to ~10 MB) | `{extracted: {...}, suggested: {supplier_id, yarn_type_id, qty_kg, rate, challan_no}}`. Pre-fill the GRN form from `suggested` (ids may be null), let the store keeper confirm, then `POST /grn`. |
 | GET | `/stock` | none | `[{id, count, material, colour, reorder_kg, stock_kg, avg_rate, low: 0/1, ...}]`. `avg_rate` is the moving average cost of the yarn on hand (`null` when none is on hand). |
 | GET | `/alerts/low-stock` | none | Yarn types at or below their reorder level |
 | POST | `/issues` | `{order_id, yarn_type_id, qty_kg, machine_id?}` | `{issue, low_stock}`. The issue stores the yarn's `rate` at that moment, so later deliveries never change its cost. Returns `409 "only X kg in stock"` if there isn't enough; two people issuing the last yarn at once can't both succeed. |
@@ -184,6 +187,7 @@ Unknown fields return `422`. Duplicates and bad foreign keys return `409`.
 | POST | `/production` | `{shift_id, machine_id, order_id, operator_id, output, hours?, entry_date?}` | `operator_id` is a **worker** id. `entry_date` defaults to today. `hours` drives overhead and wage costing. |
 | GET | `/production` | `?entry_date=` | The latest 200 entries, with `machine`, `operator` and `shift` names |
 | POST | `/rolls` | `{order_id, machine_id, shift_id, operator_id, metres}` | Returns the roll with `qr` (for example `"ETM-3F9A1C22B0"`). **Render the QR image client-side** from that string (for example with the `qrcode` npm package). |
+| GET | `/rolls` | `?order_id=&status=` | Roll list for pick lists, e.g. an order's passed rolls waiting for a truck (max 500) |
 | GET | `/rolls/{qr}` | none | **Traceability view** (below) |
 | GET | `/floor` | none | Live floor dashboard (below) |
 
@@ -255,7 +259,7 @@ Format the invoice number on the frontend, for example `INV-` followed by the ze
 
 | Method | Path | Body / query | Returns |
 |---|---|---|---|
-| POST | `/payments` | `{party: "buyer"/"supplier", party_id, amount, invoice_id?, paid_on?, ref?}` | The payment. An `invoice_id` must belong to that buyer. |
+| POST | `/payments` | `{party: "buyer"/"supplier", party_id, amount, invoice_id?, paid_on?, ref?}` | The payment. `party_id` must be an existing buyer or supplier (`422` otherwise). An `invoice_id` must belong to that buyer. |
 | GET | `/reports/receivables` | none | One row per invoice: `{..., buyer, paid, outstanding}` |
 | GET | `/reports/payables` | none | One row per supplier: `{id, name, billed, paid, outstanding}` (bills are the GRNs) |
 | GET | `/reports/order-cost` | none | All orders: `[{order_id, yarn, wages, overhead, total_cost, revenue, margin}]` |

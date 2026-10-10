@@ -28,6 +28,8 @@ def timed(label, fn):
 
 
 QS = {f: q for f, q in HEADS["message"][1].items()}
+order = {"order_no": 12, "fabric": "Poplin", "colour": "navy", "stage": "Weaving", "target_m": 5000,
+         "passed_m": 1500, "deadline": "2026-10-20", "expected_ready": "2026-10-24"}
 clear = timed("Jev: clear buyer message", lambda: ai.decide(
     {"text": "Hi, when will order 12 be ready? Our cutting starts on the 18th.", "orders": [order]}, QS))
 timed("Jev: ambiguous buyer message", lambda: ai.decide({"text": "hmm ok", "orders": []}, QS))

@@ -5,6 +5,7 @@ import math
 import os
 import secrets
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import date, timedelta
 from typing import Literal
@@ -15,8 +16,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-import ai
+# backend/.env (git-ignored) supplies OPENROUTER_API_KEY etc.; real environment variables win.
+_env = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_env):
+    for _line in open(_env):
+        _k, _, _v = _line.strip().partition("=")
+        if _k and not _k.startswith("#") and _v:
+            os.environ.setdefault(_k.strip(), _v.strip())
 
+import ai  # noqa: E402  reads settings at import
+
+SESSION_HOURS = float(os.environ.get("SESSION_HOURS", "24"))
 DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "mill.db"))
 app = FastAPI(title="Everest Textile Mills")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(","),
@@ -119,7 +129,8 @@ def hash_pw(pw, salt=None):
 
 def user(authorization: str = Header(""), db=Depends(get_db)):
     u = db.execute("SELECT u.id, u.username, u.role FROM sessions s JOIN users u ON u.id = s.user_id "
-                   "WHERE s.token = ?", (authorization.removeprefix("Bearer "),)).fetchone()
+                   "WHERE s.token = ? AND s.created_at >= datetime('now', ?)",
+                   (authorization.removeprefix("Bearer "), f"-{SESSION_HOURS} hours")).fetchone()
     if not u:
         raise HTTPException(401, "login required")
     return dict(u)
@@ -138,14 +149,19 @@ Role = Literal["owner", "admin", "store", "supervisor", "qc"]
 
 
 class UserIn(BaseModel):
-    username: str = Field(min_length=1)
+    username: str = Field(min_length=1, max_length=64, pattern=r"^\S+$")
     password: str = Field(min_length=8)
     role: Role
 
 
 class Login(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+
+
+# ponytail: in-memory lockout, per process; move to a table if the API ever runs as several processes.
+FAILED: dict[str, list[float]] = {}
+LOCK_AFTER, LOCK_SECONDS = 5, 15 * 60
 
 
 @app.post("/auth/setup")
@@ -156,15 +172,26 @@ def setup(body: Login, db=Depends(get_db)):
     with tx(db):
         if db.execute("SELECT 1 FROM users").fetchone():
             raise HTTPException(403, "already set up")
-        insert(db, "users", {"username": body.username, "pw_hash": hash_pw(body.password), "role": "owner"})
+        insert(db, "users", {"username": body.username.strip(), "pw_hash": hash_pw(body.password), "role": "owner"})
     return login(body, db)
 
 
 @app.post("/auth/login")
 def login(body: Login, db=Depends(get_db)):
-    u = db.execute("SELECT * FROM users WHERE username = ?", (body.username,)).fetchone()
-    if not u or not secrets.compare_digest(hash_pw(body.password, u["pw_hash"].split("$")[0]), u["pw_hash"]):
+    now, name = time.time(), body.username.strip().lower()
+    recent = [t for t in FAILED.get(name, []) if now - t < LOCK_SECONDS]
+    if len(recent) >= LOCK_AFTER:
+        raise HTTPException(429, f"too many failed sign-ins; try again in {int((LOCK_SECONDS - (now - recent[0])) // 60) + 1} min")
+    u = db.execute("SELECT * FROM users WHERE username = ?", (body.username.strip(),)).fetchone()
+    # Hash even for unknown users so the response time doesn't reveal which usernames exist.
+    stored = u["pw_hash"] if u else hash_pw("x")
+    if not secrets.compare_digest(hash_pw(body.password, stored.split("$")[0]), stored) or not u:
+        if len(FAILED) > 10_000:  # made-up usernames must not grow this forever
+            FAILED.clear()
+        FAILED[name] = recent + [now]
         raise HTTPException(401, "wrong username or password")
+    FAILED.pop(name, None)
+    db.execute("DELETE FROM sessions WHERE created_at < datetime('now', ?)", (f"-{SESSION_HOURS} hours",))
     token = secrets.token_urlsafe(32)
     insert(db, "sessions", {"token": token, "user_id": u["id"]})
     return {"token": token, "role": u["role"], "username": u["username"]}
@@ -234,7 +261,7 @@ def master_update(table: str, id: int, data: dict, db=Depends(get_db), _=role("a
 class OrderIn(BaseModel):
     buyer_id: int
     fabric_type_id: int
-    colour: str
+    colour: str = Field(min_length=1)
     qty_m: float = Field(gt=0)
     deadline: date
     price_per_m: float = Field(ge=0)
@@ -243,6 +270,7 @@ class OrderIn(BaseModel):
 def roll_totals(db, oid):
     return dict(db.execute("""
         SELECT COUNT(*) rolls, COALESCE(SUM(metres), 0) produced_m,
+          COALESCE(SUM(metres) FILTER (WHERE status = 'dispatched'), 0) dispatched_m,
           COUNT(*) FILTER (WHERE status IN ('passed', 'dispatched')) rolls_passed,
           COALESCE(SUM(metres) FILTER (WHERE status IN ('passed', 'dispatched')), 0) passed_m,
           COUNT(*) FILTER (WHERE status IN ('pending_qc', 'rework')) in_qc
@@ -250,7 +278,8 @@ def roll_totals(db, oid):
 
 
 def order_status(db, o, t):
-    if db.execute("SELECT 1 FROM dispatches WHERE order_id = ? AND status = 'closed'", (o["id"],)).fetchone():
+    # Dispatched only once the whole quantity has shipped; a part-shipped order is still being made.
+    if t["dispatched_m"] >= o["qty_m"]:
         return "Dispatched"
     if t["passed_m"] >= o["qty_m"]:
         return "Ready"
@@ -272,8 +301,8 @@ def feasibility(db, o):
           COALESCE((SELECT SUM(MAX(0, o2.qty_m * b2.kg_per_m - COALESCE((SELECT SUM(i.qty_kg) FROM material_issues i
                                                                        WHERE i.order_id = o2.id AND i.yarn_type_id = y.id), 0)))
             FROM orders o2 JOIN bom b2 ON b2.fabric_type_id = o2.fabric_type_id AND b2.yarn_type_id = y.id
-            WHERE o2.id < :oid
-              AND NOT EXISTS (SELECT 1 FROM dispatches d WHERE d.order_id = o2.id AND d.status = 'closed')), 0) reserved_kg
+            WHERE o2.id < :oid AND (SELECT COALESCE(SUM(r.metres), 0) FROM rolls r
+                                    WHERE r.order_id = o2.id AND r.status = 'dispatched') < o2.qty_m), 0) reserved_kg
         FROM bom b JOIN yarn_stock y ON y.id = b.yarn_type_id WHERE b.fabric_type_id = :fid""",
                             {"qty": o["qty_m"], "oid": o["id"], "fid": o["fabric_type_id"]}))
     for line in lines:
@@ -315,7 +344,7 @@ def tracking(db, o):
     fabric = db.execute("SELECT name FROM fabric_types WHERE id = ?", (o["fabric_type_id"],)).fetchone()[0]
     return {
         "order_no": o["id"], "fabric": fabric, "colour": o["colour"], "stage": order_status(db, o, t),
-        "target_m": o["qty_m"], "produced_m": produced, "passed_m": t["passed_m"],
+        "target_m": o["qty_m"], "produced_m": produced, "passed_m": t["passed_m"], "dispatched_m": t["dispatched_m"],
         "rolls_produced": t["rolls"], "rolls_passed": t["rolls_passed"],
         "progress_pct": round(100 * min(produced / o["qty_m"], 1), 1),
         "deadline": o["deadline"], "expected_ready": expected_ready(produced, o["qty_m"], s),
@@ -395,8 +424,8 @@ class IssueIn(BaseModel):
 
 
 class ChallanIn(BaseModel):
-    image_b64: str
-    mime: str = "image/jpeg"
+    image_b64: str = Field(min_length=1, max_length=14_000_000)  # ~10 MB photo
+    mime: Literal["image/jpeg", "image/png", "image/webp", "image/heic"] = "image/jpeg"
 
 
 LOW_STOCK = "SELECT * FROM yarn_stock WHERE reorder_kg > 0 AND stock_kg <= reorder_kg"
@@ -423,9 +452,11 @@ def grn_from_challan(body: ChallanIn, db=Depends(get_db), _=role("admin", "store
         f = ai.read_challan(body.image_b64, body.mime)
     except Exception as e:
         raise HTTPException(503, f"challan reader unavailable: {e}")
-    supplier = db.execute("SELECT id FROM suppliers WHERE name LIKE ?", (f.get("supplier") or "",)).fetchone()
-    yarn = db.execute("SELECT id FROM yarn_types WHERE count LIKE ? AND material LIKE ? AND colour LIKE ?",
-                      (f.get("yarn_count") or "", f.get("material") or "", f.get("colour") or "")).fetchone()
+    norm = lambda v: str(v or "").strip().lower()  # noqa: E731  exact match, ignoring case and spaces
+    supplier = db.execute("SELECT id FROM suppliers WHERE lower(trim(name)) = ?", (norm(f.get("supplier")),)).fetchone()
+    yarn = db.execute("SELECT id FROM yarn_types WHERE lower(trim(count)) = ? AND lower(trim(material)) = ? "
+                      "AND lower(trim(colour)) = ?",
+                      (norm(f.get("yarn_count")), norm(f.get("material")), norm(f.get("colour")))).fetchone()
     return {"extracted": f, "suggested": {"supplier_id": supplier and supplier[0], "yarn_type_id": yarn and yarn[0],
                                           "qty_kg": f.get("qty_kg"), "rate": f.get("rate"),
                                           "challan_no": f.get("challan_no")}}
@@ -445,7 +476,7 @@ def low_stock(db=Depends(get_db), _=Depends(user)):
 def issue_yarn(body: IssueIn, db=Depends(get_db), u=role("admin", "store")):
     with tx(db):
         s = one(db, "SELECT stock_kg, avg_rate FROM yarn_stock WHERE id = ?", body.yarn_type_id)
-        if body.qty_kg > s["stock_kg"]:
+        if body.qty_kg - s["stock_kg"] > 1e-6:  # float sums: issuing exactly what's on hand must work
             raise HTTPException(409, f"only {s['stock_kg']:g} kg in stock")
         iid = insert(db, "material_issues", {**body.model_dump(), "rate": s["avg_rate"], "created_by": u["id"]})
     return {"issue": one(db, "SELECT * FROM material_issues WHERE id = ?", iid),
@@ -696,6 +727,14 @@ def create_roll(body: RollIn, db=Depends(get_db), _=role("admin", "supervisor"))
     return one(db, "SELECT * FROM rolls WHERE id = ?", rid)
 
 
+@app.get("/rolls")
+def list_rolls(order_id: int | None = None, status: Literal["pending_qc", "passed", "rework", "rejected", "dispatched"] | None = None,
+               db=Depends(get_db), _=Depends(user)):
+    """Rolls for pick lists, e.g. the passed rolls of an order waiting for a truck."""
+    return rows(db.execute("SELECT * FROM rolls WHERE (? IS NULL OR order_id = ?) AND (? IS NULL OR status = ?) "
+                           "ORDER BY id LIMIT 500", (order_id, order_id, status, status)))
+
+
 @app.get("/rolls/{qr}")
 def trace_roll(qr: str, db=Depends(get_db), _=Depends(user)):
     """Traceability: roll -> order, machine, shift, operator, yarn issued, QC history, dispatch."""
@@ -736,7 +775,10 @@ def qc_check(qr: str, body: QcIn, db=Depends(get_db), u=role("admin", "qc")):
         r = one(db, "SELECT * FROM rolls WHERE qr = ?", qr)
         if r["status"] not in ("pending_qc", "rework"):
             raise HTTPException(409, f"roll is {r['status']}, not awaiting QC")
-        qid = insert(db, "qc_records", {"roll_id": r["id"], **body.model_dump(), "inspector_id": u["id"]})
+        rec = body.model_dump()
+        if body.result == "pass":
+            rec["defect_type"] = None
+        qid = insert(db, "qc_records", {"roll_id": r["id"], **rec, "inspector_id": u["id"]})
         db.execute("UPDATE rolls SET status = ? WHERE id = ?",
                    ({"pass": "passed", "rework": "rework", "reject": "rejected"}[body.result], r["id"]))
     ai_result = None
@@ -884,6 +926,8 @@ class PaymentIn(BaseModel):
 
 @app.post("/payments")
 def record_payment(body: PaymentIn, db=Depends(get_db), _=role("admin")):
+    if not db.execute(f"SELECT 1 FROM {body.party}s WHERE id = ?", (body.party_id,)).fetchone():  # party is a Literal
+        raise HTTPException(422, f"no {body.party} with id {body.party_id}")
     if body.invoice_id:
         inv = one(db, "SELECT o.buyer_id FROM invoices i JOIN orders o ON o.id = i.order_id WHERE i.id = ?", body.invoice_id)
         if body.party != "buyer" or inv["buyer_id"] != body.party_id:
@@ -980,16 +1024,23 @@ class ReplyIn(BaseModel):
 
 
 def message_context(db, msg):
-    if msg["order_id"]:
-        return [tracking(db, one(db, "SELECT * FROM orders WHERE id = ?", msg["order_id"]))]
-    if msg["buyer_id"]:
-        return [tracking(db, o) for o in rows(db.execute("SELECT * FROM orders WHERE buyer_id = ?", (msg["buyer_id"],)))]
-    return []
+    """All of this buyer's orders (the one the message was logged against first), never another buyer's.
+    Buyers often ask about a different order than the one the office picked."""
+    if not msg["buyer_id"]:
+        return []
+    return [tracking(db, o) for o in rows(db.execute(
+        "SELECT * FROM orders WHERE buyer_id = ? ORDER BY id = ? DESC, id", (msg["buyer_id"], msg["order_id"])))]
 
 
 @app.post("/messages")
 def receive_message(body: MessageIn, db=Depends(get_db), _=role("admin")):
-    mid = insert(db, "buyer_messages", body.model_dump())
+    data = body.model_dump()
+    if body.order_id:
+        owner = one(db, "SELECT buyer_id FROM orders WHERE id = ?", body.order_id)["buyer_id"]
+        if body.buyer_id and body.buyer_id != owner:
+            raise HTTPException(422, f"Order #{body.order_id} belongs to a different buyer.")
+        data["buyer_id"] = owner
+    mid = insert(db, "buyer_messages", data)
     msg = one(db, "SELECT * FROM buyer_messages WHERE id = ?", mid)
     routing = decide(db, "message", mid, {"text": body.text, "orders": message_context(db, msg)})
     db.execute("UPDATE buyer_messages SET confidence = ? WHERE id = ?", (routing["confidence"], mid))

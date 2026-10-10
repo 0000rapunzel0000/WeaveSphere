@@ -3,7 +3,7 @@ import os
 import tempfile
 
 os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
-os.environ.pop("OPENROUTER_API_KEY", None)
+os.environ["OPENROUTER_API_KEY"] = ""  # blank, not unset: stops app.py loading the real key from .env
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -123,6 +123,18 @@ def test_demo_flow():
     track = ok(c.get(order["tracking_path"]))
     assert track["stage"] == "Ready" and track["rolls_passed"] == 2 and track["passed_m"] == 1000
     assert c.get("/track/wrong").status_code == 404
+    # A message can't pair a buyer with someone else's order; an order alone fills in its buyer.
+    assert c.post("/messages", json={"text": "x", "buyer_id": other_buyer, "order_id": oid}, headers=owner).status_code == 422
+    seen = {}
+    real_draft = ai.draft_reply
+    ai.draft_reply = lambda text, data, lang: seen.update(data) or "ok"
+    try:
+        m = ok(c.post("/messages", json={"text": "when is the red order ready?", "order_id": oid}, headers=owner))["message"]
+        assert m["buyer_id"] == buyer
+        ok(c.post(f"/messages/{m['id']}/draft", json={"lang": "en"}, headers=owner))
+        assert [o["order_no"] for o in seen["orders"]][:2] == [oid, probe["id"]]  # logged order first, then the rest
+    finally:
+        ai.draft_reply = real_draft
     amb = ok(c.post("/messages", json={"text": "hmm", "buyer_id": buyer}, headers=owner))
     assert amb["message"]["status"] == "review"
     rv = [r for r in ok(c.get("/reviews", headers=owner)) if r["kind"] == "message"][0]
@@ -167,6 +179,68 @@ def test_demo_flow():
     assert ok(c.get("/reports/pnl", headers=owner))["total_costs"] == 63400
     s = [y for y in ok(c.get("/stock", headers=owner)) if y["id"] == yarn][0]
     assert (s["stock_kg"], s["avg_rate"]) == (50, 1000)  # moving average of what is on hand
+
+
+def owner_headers():
+    r = c.post("/auth/setup", json={"username": "boss", "password": "secret123"})
+    if r.status_code == 403:
+        r = c.post("/auth/login", json={"username": "boss", "password": "secret123"})
+    return {"Authorization": "Bearer " + ok(r)["token"]}
+
+
+def test_hardening():
+    h = owner_headers()
+    # Sign-in: unknown users and wrong passwords look the same; 5 failures lock the name for a while.
+    ok(c.post("/users", json={"username": "lock1", "password": "secret123", "role": "qc"}, headers=h))
+    assert c.post("/auth/login", json={"username": "nobody", "password": "secret123"}).status_code == 401
+    for _ in range(5):
+        assert c.post("/auth/login", json={"username": "lock1", "password": "wrong-pass"}).status_code == 401
+    assert c.post("/auth/login", json={"username": "lock1", "password": "secret123"}).status_code == 429
+    assert c.post("/users", json={"username": "has space", "password": "secret123", "role": "qc"}, headers=h).status_code == 422
+    # Sessions expire.
+    db = app.connect()
+    db.execute("INSERT INTO sessions (token, user_id, created_at) VALUES ('old', 1, datetime('now', '-3 days'))")
+    db.close()
+    assert c.get("/me", headers={"Authorization": "Bearer old"}).status_code == 401
+
+    m = lambda t, d: ok(c.post(f"/master/{t}", json=d, headers=h))["id"]  # noqa: E731
+    buyer, sup = m("buyers", {"name": "Part Ship"}), m("suppliers", {"name": "Odd Lots"})
+    yarn = m("yarn_types", {"count": "12s", "material": "jute", "colour": "raw"})
+    fab = m("fabric_types", {"name": "Hessian"})
+    loom = m("machines", {"name": "Loom H", "kind": "weaving"})
+    shift, op = m("shifts", {"name": "H shift"}), m("workers", {"name": "H op", "wage_type": "daily", "rate": 1})
+
+    # Floating-point: issuing exactly what is on hand (0.1 + 0.2 kg) works.
+    for q in (0.1, 0.2):
+        ok(c.post("/grn", json={"supplier_id": sup, "yarn_type_id": yarn, "qty_kg": q, "rate": 10}, headers=h))
+    oid = ok(c.post("/orders", json={"buyer_id": buyer, "fabric_type_id": fab, "colour": "raw", "qty_m": 1000,
+                                     "deadline": "2099-01-01", "price_per_m": 1}, headers=h))["id"]
+    ok(c.post("/issues", json={"order_id": oid, "yarn_type_id": yarn, "qty_kg": 0.3}, headers=h))
+    assert c.post("/orders", json={"buyer_id": buyer, "fabric_type_id": fab, "colour": "", "qty_m": 1,
+                                   "deadline": "2099-01-01", "price_per_m": 1}, headers=h).status_code == 422
+
+    # Partial dispatch: half shipped is not "Dispatched"; all shipped is.
+    def passed_roll():
+        qr = ok(c.post("/rolls", json={"order_id": oid, "machine_id": loom, "shift_id": shift, "operator_id": op,
+                                        "metres": 500}, headers=h))["qr"]
+        q = ok(c.post(f"/qc/{qr}", json={"result": "pass", "defect_type": "stain"}, headers=h))["qc"]
+        assert q["defect_type"] is None  # a pass carries no defect
+        return qr
+
+    def ship(qr):
+        d = ok(c.post("/dispatches", json={"order_id": oid, "vehicle_no": "TN", "driver": "D"}, headers=h))["id"]
+        ok(c.post(f"/dispatches/{d}/scan", json={"qr": qr}, headers=h))
+        ok(c.post(f"/dispatches/{d}/close", headers=h))
+
+    ship(passed_roll())
+    o = ok(c.get(f"/orders/{oid}", headers=h))
+    assert (o["stage"], o["dispatched_m"]) == ("Pending", 500)
+    ship(passed_roll())
+    assert ok(c.get(f"/orders/{oid}", headers=h))["stage"] == "Dispatched"
+
+    # Payments must name a real buyer/supplier; challan uploads must be images.
+    assert c.post("/payments", json={"party": "supplier", "party_id": 99999, "amount": 1}, headers=h).status_code == 422
+    assert c.post("/grn/challan", json={"image_b64": "x", "mime": "text/html"}, headers=h).status_code == 422
 
 
 def test_last_yarn_cannot_be_issued_twice():
@@ -219,5 +293,6 @@ def test_last_yarn_cannot_be_issued_twice():
 
 if __name__ == "__main__":
     test_demo_flow()
+    test_hardening()
     test_last_yarn_cannot_be_issued_twice()
     print("ok")

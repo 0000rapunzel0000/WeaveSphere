@@ -59,6 +59,14 @@
 
 
 @media(prefers-reduced-motion:reduce){.opening-ribbon{animation:none!important;transform:translate(-50%,-50%)}.opening.zoom .video-tile{transition:none}.opening.zoom>.video-tile video{transition:none;transform:none}.opening.zoom .opening-copy{transition:none}.story-visual img,.capability{transition:none}.mini-stock i,.mini-loom b{animation:none}.hero-scroll b{transition:none}}
+
+/* Keep the video in the same editorial frame as the four stills. */
+.opening-tile,.opening-tile.video-tile{width:19vw;height:26vw;max-height:300px;min-height:170px;aspect-ratio:auto;border:1px solid #ffffff28}
+.opening-tile:not(.video-tile)::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,#090a0b55,transparent 64%);pointer-events:none}
+.video-tile{transition:border-radius 1.4s cubic-bezier(.2,.7,.2,1),box-shadow 1.4s ease;will-change:transform}
+.opening.zoom>.video-tile{left:auto;top:auto;width:auto;height:auto;max-height:none;min-height:0;aspect-ratio:auto;border-radius:0;box-shadow:none}
+.opening.zoom>.video-tile video{transform:none;transition:none;backface-visibility:hidden}
+@media(max-width:480px){.opening-tile,.opening-tile.video-tile{width:34vw;height:47vw;max-height:none;min-height:0;aspect-ratio:auto}}
 /* Two-path sign-in: Owner identities resolve to their assigned staff dashboard. */
 .login-page{min-height:100svh;background:#141517;color:#f1efeb;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(430px,.85fr)}
 .login-art{min-height:100svh;position:relative;overflow:hidden;background:#211e1b}.login-art img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;filter:saturate(.66);transform:scale(1.015)}.login-art-shade{position:absolute;inset:0;background:linear-gradient(90deg,#101113bb,#11121444 75%),linear-gradient(0deg,#0c0d0fc2,transparent 65%)}

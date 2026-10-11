@@ -102,6 +102,18 @@ CREATE TABLE IF NOT EXISTS material_issues (
   created_by INTEGER REFERENCES users
 ) STRICT;
 
+-- Yarn that left the store without going to an order: damaged, wasted, or a physical count that came up short.
+CREATE TABLE IF NOT EXISTS stock_writeoffs (
+  id INTEGER PRIMARY KEY,
+  yarn_type_id INTEGER NOT NULL REFERENCES yarn_types,
+  qty_kg REAL NOT NULL CHECK (qty_kg > 0),
+  reason TEXT NOT NULL CHECK (reason IN ('damaged', 'wastage', 'count_correction', 'returned_to_supplier', 'other')),
+  note TEXT,
+  rate REAL, -- moving-average cost per kg at the moment of write-off: what the loss is worth
+  written_on TEXT NOT NULL DEFAULT CURRENT_DATE,
+  created_by INTEGER REFERENCES users
+) STRICT;
+
 -- Stock is derived, never stored, so it cannot drift from GRNs and issues. The covering indexes below
 -- keep it fast: 60 yarns over 500k GRNs + 2M issues read in ~80 ms (4 s without them).
 -- avg_rate is the moving average of what is on hand: (value received - value issued) / kg on hand.
@@ -111,9 +123,11 @@ CREATE VIEW yarn_stock AS
 SELECT *, CASE WHEN stock_kg > 0.001 THEN (grn_value - issued_value) / stock_kg END AS avg_rate
 FROM (SELECT y.*,
   COALESCE((SELECT SUM(qty_kg) FROM grn WHERE yarn_type_id = y.id), 0)
-    - COALESCE((SELECT SUM(qty_kg) FROM material_issues WHERE yarn_type_id = y.id), 0) AS stock_kg,
+    - COALESCE((SELECT SUM(qty_kg) FROM material_issues WHERE yarn_type_id = y.id), 0)
+    - COALESCE((SELECT SUM(qty_kg) FROM stock_writeoffs WHERE yarn_type_id = y.id), 0) AS stock_kg,
   COALESCE((SELECT SUM(qty_kg * rate) FROM grn WHERE yarn_type_id = y.id), 0) AS grn_value,
-  COALESCE((SELECT SUM(qty_kg * rate) FROM material_issues WHERE yarn_type_id = y.id), 0) AS issued_value
+  COALESCE((SELECT SUM(qty_kg * rate) FROM material_issues WHERE yarn_type_id = y.id), 0)
+    + COALESCE((SELECT SUM(qty_kg * COALESCE(rate, 0)) FROM stock_writeoffs WHERE yarn_type_id = y.id), 0) AS issued_value
   FROM yarn_types y);
 
 -- Production floor

@@ -67,7 +67,7 @@ def chat_json(prompt: str, schema: dict, model: str | None = None, reasoning: st
     return _chat(prompt, schema, model, reasoning)
 
 
-LANGS = {"en": "English", "ta": "Tamil", "hi": "Hindi"}
+LANGS = {"en": "English", "ta": "Tamil", "hi": "Hindi", "kn": "Kannada"}
 
 
 def draft_reply(message: str, order_data: dict, lang: str) -> str:

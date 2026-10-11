@@ -22,6 +22,13 @@ class GrnIn(BaseModel):
     po_line_id: int | None = None  # book this delivery against an approved purchase-order line
 
 
+class WriteOffIn(BaseModel):
+    yarn_type_id: int
+    qty_kg: float = Field(gt=0)
+    reason: Literal["damaged", "wastage", "count_correction", "returned_to_supplier", "other"]
+    note: str | None = Field(None, max_length=500)
+
+
 class IssueIn(BaseModel):
     order_id: int
     yarn_type_id: int
@@ -92,6 +99,24 @@ def issue_yarn(body: IssueIn, db=Depends(get_db), u=role("admin", "store")):
         iid = insert(db, "material_issues", {**body.model_dump(), "rate": s["avg_rate"], "created_by": u["id"]})
     return {"issue": one(db, "SELECT * FROM material_issues WHERE id = ?", iid),
             "low_stock": rows(db.execute(LOW_STOCK)), "po_refresh": auto_po(db)}
+
+
+@router.post("/stock/writeoffs")
+def write_off(body: WriteOffIn, db=Depends(get_db), u=role("admin", "store")):
+    """Takes yarn out of stock without an order (damaged, wasted, short on a count). Never below zero."""
+    with tx(db):
+        s = one(db, "SELECT stock_kg, avg_rate FROM yarn_stock WHERE id = ?", body.yarn_type_id)
+        if body.qty_kg - s["stock_kg"] > 1e-6:
+            raise HTTPException(409, f"only {s['stock_kg']:g} kg in stock")
+        wid = insert(db, "stock_writeoffs", {**body.model_dump(), "rate": s["avg_rate"], "created_by": u["id"]})
+    return {"writeoff": one(db, "SELECT * FROM stock_writeoffs WHERE id = ?", wid),
+            "low_stock": rows(db.execute(LOW_STOCK)), "po_refresh": auto_po(db)}
+
+
+@router.get("/stock/writeoffs")
+def list_writeoffs(db=Depends(get_db), _=Depends(user)):
+    return rows(db.execute("SELECT w.*, us.username by_user FROM stock_writeoffs w LEFT JOIN users us ON us.id = w.created_by "
+                           "ORDER BY w.id DESC"))
 
 
 @router.get("/issues")

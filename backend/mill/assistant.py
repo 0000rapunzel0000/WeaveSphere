@@ -91,7 +91,7 @@ def catalog(db, kinds):
 # ---------- Names -> records ----------
 def norm(s):
     """'Loom 04' and 'loom4' are the same machine."""
-    return re.sub(r"[\W_]", "", re.sub(r"\d+", lambda m: str(int(m.group())), str(s).lower()))  # keeps Tamil/Hindi letters
+    return re.sub(r"[\W_]", "", re.sub(r"\d+", lambda m: str(int(m.group())), str(s).lower()))  # keeps Tamil/Hindi/Kannada letters
 
 
 def match(value, cands):
@@ -481,11 +481,11 @@ def matches(lines, request):
 
 
 # ---------- One turn ----------
-YES = re.compile(r"^\s*(yes|y|yeah|yep|ok|okay|confirm(ed)?|correct|sure|do it|go ahead|send it|haan|ha|sari|seri|ஆம்|हाँ|हां)\b", re.I)
-NO = re.compile(r"^\s*(no|n|nope|wrong|nahi|illai|இல்லை|नहीं)\b[\s.!]*$", re.I)
+YES = re.compile(r"^\s*(yes|y|yeah|yep|ok|okay|confirm(ed)?|correct|sure|do it|go ahead|send it|haan|ha|sari|seri|howdu|houdu|ஆம்|हाँ|हां|ಹೌದು)\b", re.I)
+NO = re.compile(r"^\s*(no|n|nope|wrong|nahi|illai|illa|இல்லை|नहीं|ಇಲ್ಲ)\b[\s.!]*$", re.I)
 CANCEL = re.compile(r"^\s*(cancel|stop|forget it|never ?mind|reset|start over)\b", re.I)
 THANKS = re.compile(r"^\s*(ok(ay)?\s*)?(thanks|thank you|thank u|thx|ty|tq|cheers|great|perfect|cool|nandri|நன்றி|dhanyavad|"
-                    r"shukriya|धन्यवाद)( a lot| so much)?[\s.!🙏👍]*$", re.I)
+                    r"shukriya|dhanyavada|धन्यवाद|ಧನ್ಯವಾದ(ಗಳು)?)( a lot| so much)?[\s.!🙏👍]*$", re.I)
 AMEND = re.compile(r"^\s*(no wait|wait|sorry|oops|actually|make it|change (it|that)|that was wrong|wrong|undo)\b", re.I)
 NOT_A_REQUEST = ("I didn't catch a request there. I start fresh after each one, so tell me the whole thing in one message, e.g. "
                  "\"Loom 01 did 100 m on night shift for order 1, Arun, 8 hours\". Say \"help\" to see what I can do.")
@@ -782,6 +782,43 @@ def phone_links():
     return out
 
 
+# ponytail: per-process memory of each sender's language; a table if the bot ever runs as several processes.
+LAST_LANG: dict[str, str] = {}
+SCRIPTS = (("Tamil in Tamil script", "[\u0B80-\u0BFF]"), ("Kannada in Kannada script", "[\u0C80-\u0CFF]"),
+           ("Hindi in Devanagari script", "[\u0900-\u097F]"))
+LANG_REPLY = {"type": "object", "properties": {"language": {"type": "string"}, "reply": {"type": "string"}},
+              "required": ["language", "reply"]}
+
+
+def in_their_language(phone, text, reply):
+    """WhatsApp answers in the language and script the person wrote in (Tamil, Hindi, Kannada, Tanglish…).
+    The reply is built in English; only its wording is translated. On any AI error the English reply goes out."""
+    if not reply:
+        return reply
+    last = LAST_LANG.get(phone, "English")
+    script = next((n for n, rx in SCRIPTS if re.search(rx, text)), None)  # native letters: no guessing needed
+    if not script and last != "English" and len(re.findall(r"[^\W\d_]{3,}", text)) <= 1:  # "160 m", "yes", "ok"
+        script = last
+    keep = ("Translate only the connecting words. Copy these exactly, character for character, never translated or "
+            "transliterated: every number, unit (m, kg, h), date, code (ETM-1001, #5, INV-00002, PO-2), person name "
+            "(Arun Kumar), machine name (Loom 04), buyer, yarn and fabric name, status word in capitals, and YES. "
+            f"Keep the line breaks and numbering.\n\nReply:\n{reply}")
+    ask = (f"Translate this mill assistant's WhatsApp reply into {script}, for a mill worker. "
+           f"Set language to '{script}'. {keep}") if script else (
+        f"A mill worker sent this WhatsApp message:\n{text}\n\nWhich language is it in, and in which script? Answer e.g. "
+        "'English', 'Tamil in Latin letters', 'Hindi in Latin letters', 'Kannada in Latin letters'. Tamil, Hindi or Kannada "
+        "words typed in English letters (like 'evvalavu', 'aachu', 'kitna', 'hai', 'eshtu') make it that language in Latin "
+        "letters, even if mixed with English words. Then give the reply below in that language and script; if it is "
+        f"English, return the reply exactly as it is. {keep}")
+    try:
+        r = ai.chat_json(ask, LANG_REPLY, model=MODELS["medium"])
+        lang, said = str(r["language"]).strip(), str(r["reply"]).strip()
+    except Exception:  # AI down or a malformed answer: English is always safe
+        return reply
+    LAST_LANG[phone] = script or lang
+    return reply if (lang.lower() == "english" and not script) or not said else said
+
+
 @router.post("/assistant/whatsapp")
 def whatsapp(body: WhatsAppIn, request: Request, x_bot_secret: str = Header(""), db=Depends(get_db)):
     """Called by whatsapp/bot.mjs for each incoming message; the reply goes back to the sender."""
@@ -795,7 +832,8 @@ def whatsapp(body: WhatsAppIn, request: Request, x_bot_secret: str = Header(""),
         return {"reply": "This number isn't linked to a mill account. Ask the office to add it.", "status": "unlinked"}
     u = dict(u)
     with one_at_a_time(u, "whatsapp", phone):
-        return reachable(lambda: turn(db, u, "whatsapp", phone, body.text.strip(), api_runner(request.app, "Bearer " + token_for(u, hours=0.1))))
+        res = reachable(lambda: turn(db, u, "whatsapp", phone, body.text.strip(), api_runner(request.app, "Bearer " + token_for(u, hours=0.1))))
+    return {**res, "reply": in_their_language(phone, body.text.strip(), res.get("reply", ""))}
 
 
 @router.get("/assistant/conversations")

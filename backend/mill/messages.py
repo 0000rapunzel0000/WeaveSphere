@@ -21,7 +21,7 @@ class MessageIn(BaseModel):
 
 
 class DraftIn(BaseModel):
-    lang: Literal["en", "ta", "hi"] = "en"
+    lang: Literal["en", "ta", "hi", "kn"] = "en"
 
 
 class ReplyIn(BaseModel):

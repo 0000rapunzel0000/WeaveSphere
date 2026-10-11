@@ -111,6 +111,8 @@ def pnl(month: str | None = None, db=Depends(get_db), _=role()):
     revenue = q("SELECT COALESCE(SUM(subtotal), 0) FROM invoices WHERE strftime('%Y-%m', issued_on) = ?")  # ex-GST
     yarn = q("SELECT COALESCE(SUM(qty_kg * COALESCE(rate, 0)), 0) FROM material_issues "
              "WHERE strftime('%Y-%m', issued_on) = ?")
+    yarn += q("SELECT COALESCE(SUM(qty_kg * COALESCE(rate, 0)), 0) FROM stock_writeoffs "  # yarn lost is a cost too
+              "WHERE strftime('%Y-%m', written_on) = ?")
     wage_total = sum(w["wage"] for w in wages(db, m))
     overhead = q("SELECT COALESCE(SUM(p.hours * mc.overhead_per_hour), 0) FROM production_entries p "
                  "JOIN machines mc ON mc.id = p.machine_id WHERE strftime('%Y-%m', p.entry_date) = ?")

@@ -21,7 +21,7 @@ skill("make_roll", "Create a finished roll of fabric off a machine; it gets a QR
                                     "operator_id": v["operator"], "metres": v["metres"]}),
       lambda v, n: f"make a {g(v['metres'])} m roll for order #{v['order']} from {n['machine']}, {n['shift']} shift, {n['operator']}",
       lambda r, v, n: f"Roll {r['qr']} is waiting for QC.", gives=("roll", lambda r: r["qr"]),
-      needs=r"\brolls?\b|ரோல்|रोल")  # "loom 4 did 120 m" is output to log, never a roll
+      needs=r"\brolls?\b|ரோல்|रोल|ರೋಲ್")  # "loom 4 did 120 m" is output to log, never a roll
 
 
 def _triage(r, v, n):

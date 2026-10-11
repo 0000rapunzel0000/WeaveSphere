@@ -19,8 +19,8 @@ skill("buyer_messages", "List buyer messages in the inbox (optionally only those
       lambda r, v, n: "\n".join(f"#{m['id']} [{m['status']}{opt(m.get('dept'), ' → {}')}] {m['text'][:80]}" for m in r[:10]) or "No messages.",
       read=True)
 
-skill("draft_reply", "Write a reply to a buyer message, from live order data, in English, Tamil or Hindi.", OFFICE,
-      [F("message", "message", "buyer message"), F("language", "choice", "language", required=False, options=("en", "ta", "hi"))],
+skill("draft_reply", "Write a reply to a buyer message, from live order data, in English, Tamil, Hindi or Kannada.", OFFICE,
+      [F("message", "message", "buyer message"), F("language", "choice", "language", required=False, options=("en", "ta", "hi", "kn"))],
       lambda v: ("POST", f"/messages/{v['message']}/draft", {"lang": v.get("language") or "en"}), lambda v, n: f"draft a reply to message #{v['message']}",
       lambda r, v, n: f"Draft (not sent): {r['draft']}\nTell me 'send it' or give me the text to send.", read=True)
 

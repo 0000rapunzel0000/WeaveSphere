@@ -113,6 +113,13 @@ def test_stock_and_moving_average():
     r = c.post("/issues", json={"order_id": oid, "yarn_type_id": y, "qty_kg": 1000.01}, headers=H["owner"])
     assert r.status_code == 409 and "only 1000 kg in stock" in r.json()["detail"]
     assert get("/issues?order_id=%d" % oid)[0]["qty_kg"] == 100
+    # Writing yarn off (damaged, short on a count): stock goes down at the moving average, never below zero.
+    wo = post("/stock/writeoffs", {"yarn_type_id": y, "qty_kg": 50, "reason": "damaged", "note": "rain leak"})
+    assert wo["writeoff"]["rate"] == 204 and (stock(y)["stock_kg"], stock(y)["avg_rate"]) == (950, 204)
+    r = c.post("/stock/writeoffs", json={"yarn_type_id": y, "qty_kg": 951, "reason": "wastage"}, headers=H["owner"])
+    assert r.status_code == 409 and "only 950 kg in stock" in r.json()["detail"]
+    assert c.post("/stock/writeoffs", json={"yarn_type_id": y, "qty_kg": -5, "reason": "wastage"}, headers=H["owner"]).status_code == 422
+    assert get("/stock/writeoffs")[0]["note"] == "rain leak"
 
 
 # B2 ----------------------------------------------------------------------------------------------------------------
@@ -443,6 +450,7 @@ MATRIX = [
     ("GET", "/orders/99999/feasibility", ALL), ("GET", "/orders/99999/risk", ALL),
     ("GET", "/stock", ALL), ("GET", "/alerts/low-stock", ALL), ("GET", "/grn", ALL), ("POST", "/grn", {OFFICE, STORE}),
     ("POST", "/grn/challan", {OFFICE, STORE}), ("GET", "/issues", ALL), ("POST", "/issues", {OFFICE, STORE}),
+    ("POST", "/stock/writeoffs", {OFFICE, STORE}), ("GET", "/stock/writeoffs", ALL),
     ("GET", "/purchase-orders", ALL), ("GET", "/purchase-orders/99999", ALL), ("POST", "/purchase-orders", {OFFICE}), ("POST", "/purchase-orders/refresh", {OFFICE, STORE}),
     ("PUT", "/po-lines/99999", {OFFICE}), ("POST", "/purchase-orders/99999/approve", {OFFICE}),
     ("POST", "/purchase-orders/99999/cancel", {OFFICE}),

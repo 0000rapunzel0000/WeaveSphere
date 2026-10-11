@@ -20,12 +20,13 @@ def call(method, path, body=None, token=None):
     return r.json()
 
 
-setup = c.post("/auth/setup", json={"username": "owner", "password": PASSWORD})
+setup = c.post("/auth/setup", json={"username": "owner", "password": PASSWORD, "email": "owner@everest.example", "phone": "+91 98400 00000"})
 if setup.status_code == 403:
     sys.exit(f"{DB_PATH} already has users; seed only runs on an empty database.")
 T = setup.json()["token"]
-for user, role in [("admin", "admin"), ("store", "store"), ("floor", "supervisor"), ("qc", "qc")]:
-    call("POST", "/users", {"username": user, "password": PASSWORD, "role": role}, T)
+for i, (user, role) in enumerate([("admin", "admin"), ("store", "store"), ("floor", "supervisor"), ("qc", "qc")], 1):
+    call("POST", "/users", {"username": user, "password": PASSWORD, "role": role,
+                            "email": f"{user}@everest.example", "phone": f"+91 98400 0000{i}"}, T)
 
 
 def m(table, **row):

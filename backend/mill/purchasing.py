@@ -68,8 +68,9 @@ def refresh_po_drafts(db):
                                            "why": "no supplier history for this yarn yet; raise a PO by hand"})
                 continue
             sup, rate = pick
-            reason = (f"open orders still need {n['demand_kg']:g} kg, stock is {n['stock_kg']:g} kg, "
-                      f"{n['on_order_kg']:g} kg already on order, keep {n['reorder_kg']:g} kg in reserve")
+            kg = lambda v: f"{round(v, 1):g}"  # noqa: E731  live looms leave long decimals
+            reason = (f"open orders still need {kg(n['demand_kg'])} kg, stock is {kg(n['stock_kg'])} kg, "
+                      f"{kg(n['on_order_kg'])} kg already on order, keep {kg(n['reorder_kg'])} kg in reserve")
             if cur and cur["supplier_id"] == sup:
                 db.execute("UPDATE po_lines SET qty_kg = ?, rate = ?, reason = ? WHERE id = ?",
                            (need, rate, reason, cur["id"]))

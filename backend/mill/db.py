@@ -27,7 +27,8 @@ def migrate(db):
                             ("job_cards", "last_tick", "TEXT"),
                             ("job_cards", "released", "INTEGER NOT NULL DEFAULT 0"), ("production_entries", "auto", "INTEGER NOT NULL DEFAULT 0"),
                             ("buyer_messages", "external_id", "TEXT"), ("bot_conversations", "difficulty", "TEXT"),
-                            ("bot_conversations", "model", "TEXT")]:
+                            ("bot_conversations", "model", "TEXT"),
+                            ("users", "email", "TEXT"), ("users", "phone", "TEXT")]:
         have = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
         if have and col not in have:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")

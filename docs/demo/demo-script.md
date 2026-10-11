@@ -11,6 +11,7 @@ cd backend && rm -f demo.db demo.db-wal demo.db-shm && DB_PATH=demo.db python3 d
 cd backend && DB_PATH=demo.db SIM_SPEED=60 python3 -m uvicorn app:app --port 8000               # backend
 cd frontend && npx vite --port 5173                                                             # app: http://localhost:5173
 cd whatsapp && npm start                                                                        # WhatsApp bridge (already linked)
+cd backend && DB_PATH=demo.db ./voice_dev.sh                                                    # voice desk (optional): same DB_PATH as the app
 ```
 
 Rebuild right before the demo: dates are relative to today, and at 60× speed the looms finish order #1 in about 35 minutes.

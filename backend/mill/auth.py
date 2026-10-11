@@ -63,15 +63,25 @@ def role(*roles):
 Role = Literal["owner", "admin", "store", "supervisor", "qc"]
 
 
+EMAIL, PHONE = r"^[^@\s]+@[^@\s]+\.[^@\s]+$", r"^\+?[0-9][0-9 -]{6,18}[0-9]$"
+
+
 class UserIn(BaseModel):
     username: str = Field(min_length=1, max_length=64, pattern=r"^\S+$")
     password: str = Field(min_length=8)
     role: Role
+    email: str | None = Field(None, max_length=254, pattern=EMAIL)
+    phone: str | None = Field(None, max_length=20, pattern=PHONE)
 
 
 class Login(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
+
+
+class Setup(Login):
+    email: str = Field(max_length=254, pattern=EMAIL)
+    phone: str = Field(max_length=20, pattern=PHONE)
 
 
 # ponytail: in-memory lockout, per process; move to a table if the API ever runs as several processes.
@@ -80,14 +90,15 @@ LOCK_AFTER, LOCK_SECONDS = 5, 15 * 60
 
 
 @router.post("/auth/setup")
-def setup(body: Login, db=Depends(get_db)):
+def setup(body: Setup, db=Depends(get_db)):
     """Creates the first owner. Only works on an empty database."""
     if len(body.password) < 8:
         raise HTTPException(422, "password must be at least 8 characters")
     with tx(db):
         if db.execute("SELECT 1 FROM users").fetchone():
             raise HTTPException(403, "already set up")
-        insert(db, "users", {"username": body.username.strip(), "pw_hash": hash_pw(body.password), "role": "owner"})
+        insert(db, "users", {"username": body.username.strip(), "pw_hash": hash_pw(body.password), "role": "owner",
+                             "email": body.email, "phone": body.phone})
     return login(body, db)
 
 
@@ -133,10 +144,13 @@ def me(u=Depends(user)):
 def create_user(body: UserIn, db=Depends(get_db), u=role("admin")):
     if body.role == "owner" and u["role"] != "owner":
         raise HTTPException(403, "only an owner can create an owner")
-    uid = insert(db, "users", {"username": body.username, "pw_hash": hash_pw(body.password), "role": body.role})
-    return {"id": uid, "username": body.username, "role": body.role}
+    if db.execute("SELECT 1 FROM users WHERE username = ?", (body.username,)).fetchone():
+        raise HTTPException(409, "that username is taken")
+    uid = insert(db, "users", {"username": body.username, "pw_hash": hash_pw(body.password), "role": body.role,
+                               "email": body.email, "phone": body.phone})
+    return {"id": uid, "username": body.username, "role": body.role, "email": body.email, "phone": body.phone}
 
 
 @router.get("/users")
 def list_users(db=Depends(get_db), _=role("admin")):
-    return rows(db.execute("SELECT id, username, role FROM users"))
+    return rows(db.execute("SELECT id, username, role, email, phone FROM users ORDER BY id"))

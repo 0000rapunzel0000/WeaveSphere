@@ -4,7 +4,9 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   pw_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'store', 'supervisor', 'qc'))
+  role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'store', 'supervisor', 'qc')),
+  email TEXT,
+  phone TEXT
 ) STRICT;
 
 -- Sign-in uses signed JWTs, so there is no session table: just the signing key and signed-out tokens until they expire.

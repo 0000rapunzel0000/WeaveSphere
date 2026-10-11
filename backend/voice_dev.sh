@@ -2,8 +2,11 @@
 # Voice agent for local development, in one command: the voice server, a public tunnel to it (Retell can't reach
 # localhost), and the Retell agent pointed at the tunnel's new URL. Ctrl-C stops everything.
 # Needs RETELL_API_KEY in backend/.env, and cloudflared (brew install cloudflared).
+# It must read the same database as the app: run it with the app's DB_PATH (e.g. DB_PATH=demo.db ./voice_dev.sh),
+# or callers' tracking links and orders won't be found.
 cd "$(dirname "$0")" || exit 1
 PORT=${VOICE_PORT:-8002}
+echo "Voice agent reads ${DB_PATH:-mill.db} (the app must use the same DB_PATH)."
 python3 -m uvicorn voice_app:app --port "$PORT" &
 SERVER=$!
 LOG=$(mktemp)

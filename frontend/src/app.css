@@ -468,3 +468,9 @@ a.primary,a.secondary{display:inline-flex;align-items:center;justify-content:cen
 .chat-form input{flex:1;min-width:0;min-height:44px;border:1px solid #2927222c;background:#fffefa;color:#292722;padding:10px 12px;outline:none;font:15px var(--sans)}
 .chat-form input:focus{border-color:#a85f39}.chat-form input::placeholder{color:#a39b90}
 @media(max-width:720px){.chat-msg{max-width:90%}.chat-form input{font-size:16px}}
+
+/* Table pagination */
+.pager{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:10px;font:12px var(--mono);color:#716b62}
+.pager button:disabled{opacity:.4;cursor:default}
+.table tr[hidden]{display:none!important}  /* phones restyle rows as blocks */
+@media print{.table tr[hidden]{display:table-row!important}.pager{display:none}}

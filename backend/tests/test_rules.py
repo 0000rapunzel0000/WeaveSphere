@@ -27,7 +27,7 @@ def fresh_db():
     mdb.init()
     auth.jwt_secret.cache_clear()
     auth.FAILED.clear()
-    H["owner"] = bearer(ok(c.post("/auth/setup", json={"username": "boss", "password": "secret123"}))["token"])
+    H["owner"] = bearer(ok(c.post("/auth/setup", json={"username": "boss", "password": "secret123", "email": "boss@mill.example", "phone": "+91 98400 11111"}))["token"])
     for r in ("admin", "store", "supervisor", "qc"):
         ok(c.post("/users", json={"username": r, "password": "secret123", "role": r}, headers=H["owner"]))
         H[r] = bearer(ok(c.post("/auth/login", json={"username": r, "password": "secret123"}))["token"])
@@ -488,6 +488,14 @@ def test_permission_matrix():
     assert not missing, f"endpoints with no permission check here: {sorted(missing)}"
     # An office user can't make an owner.
     assert status("POST", "/users", {"username": "o2", "password": "secret123", "role": "owner"}, who=OFFICE) == 403
+    # Accounts carry an email and phone; bad ones and taken usernames are refused.
+    new = {"username": "ravi", "password": "secret123", "role": "store", "email": "ravi@mill.example", "phone": "+91 98400 33333"}
+    assert status("POST", "/users", new, who=OFFICE) == 200
+    assert status("POST", "/users", new, who=OFFICE) == 409
+    assert status("POST", "/users", {**new, "username": "r2", "email": "not-an-email"}, who=OFFICE) == 422
+    assert status("POST", "/users", {**new, "username": "r3", "phone": "call me"}, who=OFFICE) == 422
+    assert {"email": "ravi@mill.example", "phone": "+91 98400 33333"}.items() <= next(
+        x for x in c.get("/users", headers=H["owner"]).json() if x["username"] == "ravi").items()
 
 
 # B15 ---------------------------------------------------------------------------------------------------------------

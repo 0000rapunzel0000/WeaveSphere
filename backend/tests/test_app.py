@@ -24,8 +24,8 @@ def ok(r, code=200):
 
 
 def test_demo_flow():
-    owner = {"Authorization": "Bearer " + ok(c.post("/auth/setup", json={"username": "boss", "password": "secret123"}))["token"]}
-    assert c.post("/auth/setup", json={"username": "x", "password": "secret123"}).status_code == 403
+    owner = {"Authorization": "Bearer " + ok(c.post("/auth/setup", json={"username": "boss", "password": "secret123", "email": "boss@mill.example", "phone": "+91 98400 11111"}))["token"]}
+    assert c.post("/auth/setup", json={"username": "x", "password": "secret123", "email": "x@mill.example", "phone": "+91 98400 22222"}).status_code == 403
     ok(c.post("/users", json={"username": "qc1", "password": "secret123", "role": "qc"}, headers=owner))
     qc = {"Authorization": "Bearer " + ok(c.post("/auth/login", json={"username": "qc1", "password": "secret123"}))["token"]}
     assert c.post("/orders", json={}, headers=qc).status_code in (403, 422)
@@ -187,7 +187,7 @@ def test_demo_flow():
 
 
 def owner_headers():
-    r = c.post("/auth/setup", json={"username": "boss", "password": "secret123"})
+    r = c.post("/auth/setup", json={"username": "boss", "password": "secret123", "email": "boss@mill.example", "phone": "+91 98400 11111"})
     if r.status_code == 403:
         r = c.post("/auth/login", json={"username": "boss", "password": "secret123"})
     return {"Authorization": "Bearer " + ok(r)["token"]}

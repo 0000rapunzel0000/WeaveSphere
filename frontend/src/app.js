@@ -73,6 +73,21 @@ function textarea(lbl,name,placeholder='',required=false){return`<label class="f
 function head(title,kicker,actions=''){return`<div class="page-head"><div><div class="eyebrow"><i></i> ${esc(kicker)}</div><h1>${esc(title)}</h1><p>${esc(descriptions[page]||'')}</p></div><div class="head-actions">${actions}</div></div>`}
 function panel(title,body,tag=''){return`<section class="panel"><div class="panel-head"><h2>${title}</h2>${tag?`<span class="mono">${tag}</span>`:''}</div>${body}</section>`}
 function kpi(lbl,value,note='',tone=''){return`<article class="panel kpi"><label>${lbl}</label><strong>${value}</strong><small class="${tone}">${note}</small></article>`}
+// Every table shows PER_PAGE rows at a time; the page each table is on survives the 10 s auto-refresh.
+const PER_PAGE=10,tablePage={};
+function paginate(){
+ $$('#view .table').forEach((t,i)=>{
+  const rows=[...t.tBodies[0]?.rows||[]],pages=Math.ceil(rows.length/PER_PAGE),key=page+':'+i;
+  if(pages<2)return;
+  const show=n=>{tablePage[key]=n=Math.min(Math.max(0,n),pages-1);rows.forEach((r,k)=>r.hidden=Math.floor(k/PER_PAGE)!==n);
+   bar.querySelector('span').textContent=`${n*PER_PAGE+1}–${Math.min(rows.length,(n+1)*PER_PAGE)} of ${rows.length}`;
+   bar.querySelector('[data-step="-1"]').disabled=n===0;bar.querySelector('[data-step="1"]').disabled=n===pages-1};
+  const bar=document.createElement('div');bar.className='pager';
+  bar.innerHTML='<button type="button" class="secondary" data-step="-1" aria-label="Previous page">‹ PREV</button><span aria-live="polite"></span><button type="button" class="secondary" data-step="1" aria-label="Next page">NEXT ›</button>';
+  bar.addEventListener('click',e=>{const b=e.target.closest('[data-step]');if(b)show((tablePage[key]||0)+ +b.dataset.step)});
+  t.closest('.table-wrap').after(bar);show(tablePage[key]||0);
+ });
+}
 function table(headers,rows,empty='Nothing here yet.'){if(!rows.length)return`<div class="empty">${empty}</div>`;return`<div class="table-wrap"><table class="table"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`}
 function badge(text,tone=''){const t=label(text);let c=t.match(/Break|Reject|Failed|Blocked|Overdue|high|short/i)?'bad':t.match(/Idle|Rework|Hold|Short|Risk|Maintenance|Pending|review|In QC|med|open/i)?'warn':t.match(/Pass|Running|Ready|Dispatched|Available|Can start|In range|routed|replied|closed|low/i)?'':'neutral';return`<span class="badge ${tone||c}">${esc(t)}</span>`}
 function formStart(kind,title,fields,submit='SAVE ENTRY',extra='',hidden=''){return`<form class="panel form-section" data-form="${kind}">${hidden}<div class="panel-head"><h2>${title}</h2><span class="mono">${extra}</span></div><div class="form-grid">${fields}</div><div class="form-actions"><button class="primary">${submit}</button></div></form>`}
@@ -320,6 +335,7 @@ async function render(quiet){
  if(!quiet)shownFlash=flash;  // a result notice stays through the 10 s auto-refresh until the next thing you do
  $('#view').innerHTML=(shownFlash?`<div class="notice" style="margin-bottom:11px">${shownFlash}</div>`:'')+html;flash='';dirty=false;
  $$('#view .table').forEach(t=>{const h=[...t.querySelectorAll('th')].map(th=>th.textContent.trim());t.querySelectorAll('tbody tr').forEach(tr=>[...tr.children].forEach((td,i)=>td.dataset.label=h[i]||''))});
+ paginate();
  $('#lastSaved').textContent='UPDATED '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
  if(afterRender){const f=afterRender;afterRender=null;f()}
 }

@@ -83,12 +83,12 @@ Use `GET /me` after login to get `{id, username, role}` and choose which screens
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| POST | `/auth/setup` | `{username, password}` | Creates the first owner. Works **only once**, on an empty database. Returns the same response as login. |
+| POST | `/auth/setup` | `{username, password, email, phone}` | Creates the first owner. Works **only once**, on an empty database. Returns the same response as login. |
 | POST | `/auth/login` | `{username, password}` | Returns `{token, role, username}`. The JWT expires after `SESSION_HOURS` (default 24). Signing key: `JWT_SECRET` (32+ chars) if set, else generated once and kept in the DB. Five wrong passwords lock that username for 15 minutes (`429`). |
 | POST | `/auth/logout` | none | Revokes the token (its id is kept until it would have expired) |
 | GET | `/me` | none | `{id, username, role}` |
-| POST | `/users` | `{username, password (min 8), role}` | Admin or owner. Only an owner can create another owner. |
-| GET | `/users` | none | `[{id, username, role}]` |
+| POST | `/users` | `{username, password (min 8), role, email?, phone?}` | Admin or owner. Only an owner can create another owner. Taken username → 409. The app's form (Workforce → Add a staff account) asks for email and phone. |
+| GET | `/users` | none | `[{id, username, role, email, phone}]` |
 
 ## Master data
 

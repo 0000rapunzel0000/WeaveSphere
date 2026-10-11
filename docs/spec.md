@@ -144,12 +144,16 @@ everyone can read. Machine status can only change through the status control, so
 - **Closing the truck** marks its rolls dispatched and raises the **GST invoice** (metres × order price, GST at the
   fabric's rate). Printable invoice and packing list.
 - Partial dispatch is normal: an order is "Dispatched" only when all its metres have shipped.
+- **Nothing forgotten on the shelf:** finished goods show how long the oldest passed roll has waited; rolls waiting longer
+  than `SHELF_DAYS` (7) are flagged by code and counted in the owner's digest.
 
 ### 3.10 Accounts and reports
 - **Payments** from buyers (always against an invoice, never more than is due) and to suppliers.
 - **Receivables** per invoice (total, paid, outstanding) and **payables** per supplier (receipts − payments).
 - **Cost per order:** yarn issued (at the rates used) + labour (piece output × rate, or day rate split by hours) +
-  machine overhead (hours × ₹/hour), against invoiced revenue → margin.
+  machine overhead (hours × ₹/hour), against invoiced revenue → margin. Divided by the metres made, it gives the
+  **cost per metre**, and so **the cost of any single roll** (its metres × that rate), shown on the roll's trace page to
+  owner and office.
 - **Monthly P&L** (owner): revenue ex-GST − yarn − wages − overhead.
 - **Machine report:** output, hours and breakdowns per machine per month.
 - All tables export to CSV.
@@ -286,6 +290,8 @@ for QC), #2 North Loom recycled twill 860 m (short of polyester → a PO draft),
 ---
 
 ## 8. Demo walkthrough (about 10 minutes)
+
+The up-to-date, step-by-step script (app and WhatsApp, checked on fresh data) is `docs/demo/demo-script.md`.
 
 1. **Landing page** → scroll the story → Sign in as `owner`.
 2. **Dashboard:** the morning digest, KPIs, live machine board (Loom 04 weaving order #1).

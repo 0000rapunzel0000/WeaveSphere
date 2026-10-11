@@ -1,4 +1,6 @@
 """Finished goods and dispatch: trucks, roll scanning, and the GST invoice raised on close."""
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -19,13 +21,20 @@ class ScanIn(BaseModel):
     qr: str
 
 
+SHELF_DAYS = int(os.environ.get("SHELF_DAYS", "7"))  # a passed roll waiting longer than this to ship is flagged
+
+
 @router.get("/finished-goods")
 def finished_goods(db=Depends(get_db), _=Depends(user)):
+    """Passed rolls on the shelf per order: how many, how long the oldest has waited, how many waited too long."""
     return rows(db.execute("""SELECT o.id order_id, b.name buyer, f.name fabric, o.colour,
-          COUNT(*) rolls, SUM(r.metres) metres
+          COUNT(*) rolls, SUM(r.metres) metres, MIN(r.made_on) oldest_made,
+          CAST(julianday(date('now', 'localtime')) - julianday(MIN(r.made_on)) AS INTEGER) days_on_shelf,
+          COUNT(*) FILTER (WHERE julianday(date('now', 'localtime')) - julianday(r.made_on) > :d) waiting_long,
+          group_concat(r.qr, ', ') FILTER (WHERE julianday(date('now', 'localtime')) - julianday(r.made_on) > :d) long_rolls
         FROM rolls r JOIN orders o ON o.id = r.order_id JOIN buyers b ON b.id = o.buyer_id
         JOIN fabric_types f ON f.id = o.fabric_type_id
-        WHERE r.status = 'passed' GROUP BY o.id ORDER BY o.id"""))
+        WHERE r.status = 'passed' GROUP BY o.id ORDER BY o.id""", {"d": SHELF_DAYS}))
 
 
 @router.post("/dispatches")

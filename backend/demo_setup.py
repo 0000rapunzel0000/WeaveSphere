@@ -2,7 +2,9 @@
     cd backend && DB_PATH=demo.db python3 demo_setup.py        (needs an empty or missing demo.db)
 Then run the backend on it:  DB_PATH=demo.db SIM_SPEED=60 python3 -m uvicorn app:app --port 8000
 Goes through the real API (with the AI if OPENROUTER_API_KEY is set), so every rule applies.
-The only shortcut: one old invoice is back-dated in SQL so the 'overdue' features have something to show."""
+Shortcuts in SQL: one old invoice is back-dated so the 'overdue' features have something to show, roll codes are renamed
+to short ones (ETM-1001…) so they can be typed in a chat during the demo, and ETM-1003 is dated 12 days back so the
+"waiting too long to ship" flag has a roll to show."""
 import os
 import runpy
 import sys
@@ -103,9 +105,9 @@ db.execute("UPDATE machine_status_log SET at = datetime('now', '-6 days') WHERE 
 db.close()
 post("/machines/2/status", {"status": "Running"}, FL)
 
-step("the looms have been running: Loom 04 for 20 hours, Loom 01 for 6 (machine time)")
+step("the looms have been running: Loom 04 and Loom 01 for 6 hours (machine time); at SIM_SPEED=60 both keep going ~30 min")
 db = mdb.connect()
-db.execute("UPDATE job_cards SET last_tick = datetime('now','-20 hours'), running_since = datetime('now','-20 hours') WHERE machine_id = 3 AND status = 'open'")
+db.execute("UPDATE job_cards SET last_tick = datetime('now','-6 hours'), running_since = datetime('now','-6 hours') WHERE machine_id = 3 AND status = 'open'")
 db.execute("UPDATE job_cards SET last_tick = datetime('now','-6 hours'), running_since = datetime('now','-6 hours') WHERE machine_id = 2 AND status = 'open'")
 db.close()
 livefloor._last_accrual = 0
@@ -133,6 +135,14 @@ for m in [{"text": "Hi, any update on the navy twill? Our cutting starts on the 
           {"text": "ok noted, thanks", "buyer_id": kids}]:
     r = post("/messages", m)
     print(f"    routed: {r['message']['status']:7} {r['message']['dept'] or '-':10} {m['text'][:50]}")
+
+step("short roll codes you can type in a chat: ready to ship ETM-1001…, waiting for QC ETM-2001…, shipped ETM-4001…")
+db = mdb.connect()
+for status, base in (("passed", 1000), ("pending_qc", 2000), ("rework", 3000), ("dispatched", 4000), ("rejected", 9000)):
+    for i, (rid,) in enumerate(db.execute("SELECT id FROM rolls WHERE status = ? ORDER BY id", (status,)).fetchall(), 1):
+        db.execute("UPDATE rolls SET qr = ? WHERE id = ?", (f"ETM-{base + i}", rid))  # the second SQL shortcut: readable codes
+db.execute("UPDATE rolls SET made_on = date('now', 'localtime', '-12 days') WHERE qr = 'ETM-1003'")  # forgotten on the shelf
+db.close()
 
 step("the morning digest")
 d = post("/digest/refresh", {})

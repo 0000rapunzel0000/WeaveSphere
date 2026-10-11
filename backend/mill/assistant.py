@@ -15,6 +15,7 @@ A conversation is one request. It ends when the request is done, fails or is can
 minutes, or when the person clearly starts something else; the next message starts clean, with no old history."""
 import difflib
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
 import re
@@ -722,6 +723,17 @@ def one_at_a_time(u, channel, peer):
         return _locks.setdefault((u["id"], channel, peer), threading.Lock())
 
 
+def reachable(handle):
+    """The AI service can drop mid-message (no network, a timeout, a garbled answer). Say so plainly instead of a 500;
+    nothing of that message was saved, so the person just sends it again."""
+    try:
+        return handle()
+    except (OSError, ValueError) as e:  # URLError and timeouts are OSErrors; a garbled JSON answer is a ValueError
+        logging.warning("assistant: AI unreachable: %r", e)
+        return {"reply": "Sorry, I can't reach the AI right now, so nothing was saved. Please send that again in a minute, "
+                         "or use the app.", "status": "unavailable"}
+
+
 def api_runner(app, authorization):
     """Calls the app's own API in-process, as the person who is chatting. Runs from a request's worker thread."""
     def run(method, path, body):
@@ -744,7 +756,7 @@ class ChatIn(BaseModel):
 @router.post("/assistant/chat")
 def chat(body: ChatIn, request: Request, authorization: str = Header(""), db=Depends(get_db), u=Depends(user)):
     with one_at_a_time(u, "web", ""):
-        return turn(db, u, "web", "", body.text.strip(), api_runner(request.app, authorization))
+        return reachable(lambda: turn(db, u, "web", "", body.text.strip(), api_runner(request.app, authorization)))
 
 
 @router.get("/assistant/chat")
@@ -783,7 +795,7 @@ def whatsapp(body: WhatsAppIn, request: Request, x_bot_secret: str = Header(""),
         return {"reply": "This number isn't linked to a mill account. Ask the office to add it.", "status": "unlinked"}
     u = dict(u)
     with one_at_a_time(u, "whatsapp", phone):
-        return turn(db, u, "whatsapp", phone, body.text.strip(), api_runner(request.app, "Bearer " + token_for(u, hours=0.1)))
+        return reachable(lambda: turn(db, u, "whatsapp", phone, body.text.strip(), api_runner(request.app, "Bearer " + token_for(u, hours=0.1))))
 
 
 @router.get("/assistant/conversations")

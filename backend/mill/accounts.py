@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from mill.auth import role
 from mill.db import get_db, insert, month_of, one, rows
+from mill.orders import tracking
 from mill.workforce import wages
 
 router = APIRouter()
@@ -49,8 +50,18 @@ def order_cost(db, oid):
                           "JOIN machines m ON m.id = p.machine_id WHERE p.order_id = ?", (oid,)).fetchone()[0]
     revenue = db.execute("SELECT COALESCE(SUM(subtotal), 0) FROM invoices WHERE order_id = ?", (oid,)).fetchone()[0]
     cost = yarn + labour + overhead
+    # Cost per metre prices any single roll (its metres x this). It counts the yarn the metres made actually used (recipe
+    # kg/m at the rate it was issued, never more than was issued), so yarn issued ahead for later metres doesn't load the
+    # first ones. ponytail: one rate for the whole order so far; per-roll costing would need yarn and hours booked per roll.
+    o = one(db, "SELECT * FROM orders WHERE id = ?", oid)
+    made = tracking(db, o)["produced_m"]
+    used = db.execute("""SELECT COALESCE(SUM(MIN(i.kg, :made * b.kg_per_m) * i.value / i.kg), 0) FROM bom b
+        JOIN (SELECT yarn_type_id, SUM(qty_kg) kg, SUM(qty_kg * COALESCE(rate, 0)) value FROM material_issues
+              WHERE order_id = :oid GROUP BY yarn_type_id) i ON i.yarn_type_id = b.yarn_type_id
+        WHERE b.fabric_type_id = :fid AND i.kg > 0""", {"made": made, "oid": oid, "fid": o["fabric_type_id"]}).fetchone()[0]
     return {"order_id": oid, "yarn": round(yarn, 2), "wages": round(labour, 2), "overhead": round(overhead, 2),
-            "total_cost": round(cost, 2), "revenue": round(revenue, 2), "margin": round(revenue - cost, 2)}
+            "total_cost": round(cost, 2), "revenue": round(revenue, 2), "margin": round(revenue - cost, 2),
+            "made_m": made, "cost_per_m": round((used + labour + overhead) / made, 2) if made else None}
 
 
 @router.get("/reports/order-cost")

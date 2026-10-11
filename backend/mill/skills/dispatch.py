@@ -28,5 +28,6 @@ skill("trucks", "List trucks: the open ones being loaded and recent dispatches."
 
 skill("finished_goods", "List finished, QC-passed rolls waiting to be dispatched, per order.", STAFF, [],
       lambda v: ("GET", "/finished-goods", None), lambda v, n: "look up finished goods",
-      lambda r, v, n: "\n".join(f"Order #{x['order_id']} {x['buyer']}: {x['rolls']} roll(s), {g(x['metres'])} m" for x in r)
+      lambda r, v, n: "\n".join(f"Order #{x['order_id']} {x['buyer']}: {x['rolls']} roll(s), {g(x['metres'])} m, oldest {x['days_on_shelf']} day(s) on the shelf"
+                                + (f" - waiting too long: {x['long_rolls']}" if x["waiting_long"] else "") for x in r)
       or "Nothing is waiting.", read=True)

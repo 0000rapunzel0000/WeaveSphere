@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends
 from mill import ai
 from mill.auth import role
 from mill.db import connect, get_db, rows
+from mill.dispatch import SHELF_DAYS
 from mill.inventory import LOW_STOCK
 from mill.orders import feasibility, tracking
 from mill.purchasing import po_list
@@ -101,6 +102,9 @@ def build_digest(db, today):
         "defect_alerts": {"count": len(alerts), "items": [{"where": a["label"], "failed_pct": round(a["rate"] * 100),
                                                            "main_defect": a["top_defect"]} for a in alerts]},
         "reviews_waiting": db.execute("SELECT COUNT(*) FROM ai_reviews WHERE status = 'open'").fetchone()[0],
+        "rolls_waiting_to_ship": {"days": SHELF_DAYS, "count": db.execute(
+            "SELECT COUNT(*) FROM rolls WHERE status = 'passed' AND julianday(?) - julianday(made_on) > ?",
+            (today.isoformat(), SHELF_DAYS)).fetchone()[0]},
     }
 
 
@@ -123,6 +127,9 @@ def plain_digest(f):
         lines.append(f"{f['overdue_receivables']['count']} overdue invoice(s), ₹{f['overdue_receivables']['total']:,.0f} outstanding.")
     if f["defect_alerts"]["count"]:
         lines.append("Defect alerts: " + ", ".join(f"{a['where']} ({a['failed_pct']}% failing)" for a in f["defect_alerts"]["items"]) + ".")
+    if f.get("rolls_waiting_to_ship", {}).get("count"):
+        w = f["rolls_waiting_to_ship"]
+        lines.append(f"{w['count']} passed roll(s) have waited over {w['days']} days to ship.")
     if f["reviews_waiting"]:
         lines.append(f"{f['reviews_waiting']} AI decision(s) waiting for a person to check.")
     return " ".join(lines)

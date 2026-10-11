@@ -331,7 +331,8 @@ def test_money_month_end():
     assert (inv["subtotal"], inv["gst"], inv["total"]) == (30000, 1500, 31500)
     # yarn 5,000 + labour (200 piece + 600 x 3h/3h daily) + overhead 8h x 100
     assert get(f"/reports/order-cost/{oid}") == {"order_id": oid, "yarn": 5000, "wages": 800, "overhead": 800,
-                                                  "total_cost": 6600, "revenue": 30000, "margin": 23400}
+                                                  "total_cost": 6600, "revenue": 30000, "margin": 23400,
+                                                  "made_m": 100, "cost_per_m": 66}   # 6,600 / 100 m made
     p = get("/reports/pnl")
     assert (p["revenue"], p["yarn"], p["wages"], p["overhead"], p["total_costs"], p["profit"]) == (30000, 5000, 800, 800, 6600, 23400)
     assert get("/reports/pnl?month=2020-01")["total_costs"] == 0
@@ -505,3 +506,36 @@ def test_input_safety():
     assert r.status_code == 422 and isinstance(r.json()["detail"], str)
     assert status("POST", "/qc/ETM-NOPE", {"result": "pass"}) == 404
     assert status("POST", f"/machines/{w['loom']}/status", {"status": "Exploded"}) == 422
+
+
+# The brief: "nobody knows the real cost of a single roll", and "nothing forgotten in a corner".
+def test_cost_of_one_roll_and_rolls_waiting_on_the_shelf():
+    w = basics()
+    y = m("yarn_types", count="20s", material="cotton", colour="e")
+    f = m("fabric_types", name="F")
+    m("bom", fabric_type_id=f, yarn_type_id=y, kg_per_m=0.5)
+    piece = m("workers", name="Piece", wage_type="piece", rate=2)
+    post("/grn", {"supplier_id": w["s1"], "yarn_type_id": y, "qty_kg": 100, "rate": 100})
+    oid = order(w["buyer"], f, 100, price=300)
+    post("/issues", {"order_id": oid, "yarn_type_id": y, "qty_kg": 40})                  # 4,000 of yarn
+    post("/production", {"shift_id": w["shift"], "machine_id": w["loom"], "order_id": oid, "operator_id": piece,
+                         "output": 80, "hours": 4})                                        # 160 wages + 400 overhead
+    old, new = roll(w, oid, 50), roll(w, oid, 30)
+    for q in (old, new):
+        post(f"/qc/{q}", {"result": "pass"})
+    # 4,560 for 80 m made = 57 per metre; a 50 m roll cost 2,850.
+    assert get(f"/reports/order-cost/{oid}")["cost_per_m"] == 57
+    assert get(f"/rolls/{old}")["cost"] == {"per_m": 57, "roll": 2850}
+    assert get(f"/rolls/{old}", who="admin")["cost"]["roll"] == 2850
+    assert get(f"/rolls/{old}", who="qc")["cost"] is None                               # money is for owner and office
+    # Yarn issued ahead for metres not made yet doesn't load the metres made: 40 kg more issued, still 57 per metre.
+    post("/issues", {"order_id": oid, "yarn_type_id": y, "qty_kg": 40})
+    assert get(f"/reports/order-cost/{oid}")["cost_per_m"] == 57
+
+    db = mdb.connect()
+    db.execute("UPDATE rolls SET made_on = ? WHERE qr = ?", (str(TODAY - timedelta(days=12)), old))
+    db.close()
+    fg = get("/finished-goods")[0]
+    assert (fg["rolls"], fg["days_on_shelf"], fg["waiting_long"], fg["long_rolls"]) == (2, 12, 1, old)
+    d = post("/digest/refresh")
+    assert d["facts"]["rolls_waiting_to_ship"] == {"days": 7, "count": 1}

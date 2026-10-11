@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brief coverage · WeaveSphere</title>
+<style>
+:root{--bg:#f6f4ee;--paper:#fffefa;--ink:#211f1b;--muted:#6d675e;--line:#2a27221a;--accent:#a85f39;--accent-soft:#a85f3914;--ok:#2f7a4f;--ok-soft:#2f7a4f14;--new:#8a5a12;--new-soft:#e0a24a22}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#151618;--paper:#1d1e21;--ink:#ecebe5;--muted:#a19c92;--line:#ffffff17;--accent:#e2a676;--accent-soft:#e2a6761a;--ok:#7fd3a0;--ok-soft:#7fd3a01a;--new:#f0c27a;--new-soft:#f0c27a1f}}
+:root[data-theme="dark"]{--bg:#151618;--paper:#1d1e21;--ink:#ecebe5;--muted:#a19c92;--line:#ffffff17;--accent:#e2a676;--accent-soft:#e2a6761a;--ok:#7fd3a0;--ok-soft:#7fd3a01a;--new:#f0c27a;--new-soft:#f0c27a1f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:48px 24px 72px}
+.eyebrow{font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+h1{font-size:clamp(30px,4.4vw,46px);line-height:1.05;letter-spacing:-.03em;margin:14px 0 12px;font-weight:650}
+.lede{color:var(--muted);max-width:760px;margin:0 0 28px;font-size:16px}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 36px}
+.stat{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.stat b{display:block;font-size:30px;letter-spacing:-.03em;font-weight:650}
+.stat span{color:var(--muted);font-size:13px}
+section{margin:0 0 30px}
+h2{font-size:19px;margin:0 0 4px;letter-spacing:-.01em}
+.quote{color:var(--muted);font-size:14px;margin:0 0 12px;font-style:italic;max-width:860px}
+.table-wrap{background:var(--paper);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:12px 16px;border-bottom:1px solid var(--line)}
+td{padding:13px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td:first-child{width:28%;font-weight:600}
+td:nth-child(2){width:44%}
+td:nth-child(3){width:18%;color:var(--muted);font-size:14px}
+td:last-child{width:10%;white-space:nowrap}
+.pill{display:inline-block;padding:4px 9px;border-radius:999px;font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;text-transform:uppercase;background:var(--ok-soft);color:var(--ok)}
+.pill.new{background:var(--new-soft);color:var(--new)}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--accent-soft);padding:1px 5px;border-radius:5px}
+.foot{color:var(--muted);font-size:13px;margin-top:34px;border-top:1px solid var(--line);padding-top:16px}
+@media (max-width:760px){
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  thead{display:none}
+  table,tbody,tr,td{display:block;width:100%!important}
+  tr{padding:12px 14px;border-bottom:1px solid var(--line)}
+  td{border:0;padding:3px 0}
+  td:nth-child(3)::before{content:"Show it: ";font-weight:600;color:var(--ink)}
+}
+@media print{body{background:#fff}.table-wrap,.stat{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Everest Textile Mills · WeaveSphere</div>
+  <h1>Does the system cover the brief?</h1>
+  <p class="lede">Every requirement in <em>Textile Manufacturing System</em> ("Build one system to replace notebooks and
+    phone calls"), what WeaveSphere does about it, and where to show it in the demo. Step numbers refer to
+    <code>docs/demo/demo-script.md</code>.</p>
+
+  <div class="stats">
+    <div class="stat"><b>35</b><span>requirements in the brief</span></div>
+    <div class="stat"><b>35</b><span>covered</span></div>
+    <div class="stat"><b>2</b><span>added after this check</span></div>
+    <div class="stat"><b>53</b><span>automated tests passing</span></div>
+  </div>
+
+  <section>
+    <h2>How things run today</h2>
+    <p class="quote">"Raw material stock: tracked in a notebook · Machine and order status: checked by walking the floor ·
+      Quality checks: recorded on paper slips · Order updates for buyers: given over phone calls · Worker attendance and
+      wages: marked in a register."</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Brief</th><th>What we built</th><th>Show it</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Raw material stock in a notebook</td><td>Live yarn stock: receipts minus issues, valued at moving-average rate. Nothing to reconcile.</td><td>Inventory (step 6)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Walking the floor for machine and order status</td><td>Live machine board and order stages worked out automatically; also answerable by WhatsApp.</td><td>Dashboard, Production, WhatsApp (2, 3, 4)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Quality on paper slips</td><td>QC results with defect types, a QC queue, and each roll's full history.</td><td>Quality (7)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Phone calls for buyer updates</td><td>Buyer tracking link, buyer inbox with AI reply drafts (English, Tamil, Hindi), WhatsApp assistant, AI order desk.</td><td>Tracking, Inbox (11, 14)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Attendance and wages in a register</td><td>Attendance per shift, monthly register, wages (day rate × days, or piece rate × output).</td><td>Workforce (13)</td><td><span class="pill">Covered</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Yarn arrives at the gate</h2>
+    <p class="quote">"Note down how much came in, what type and colour it is, and which order it is for … always know how much
+      raw material it has, and get a warning before it runs low … see whether there is enough yarn to start it."</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Brief</th><th>What we built</th><th>Show it</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>How much, what type and colour, which order</td><td>Goods receipt: supplier, yarn (count, material, colour), kg, rate, challan and an optional order; or fill it from a photo of the challan.</td><td>Inventory (6)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Always know the stock</td><td>Live stock per yarn, always current.</td><td>Inventory (6)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Warning before it runs low</td><td>Low-stock alerts against each yarn's reorder level, in the morning digest too, and purchase orders drafted automatically.</td><td>Dashboard, Inventory (2, 6)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Enough yarn to start a new order?</td><td>Yarn check on every order: need vs stock not already reserved by earlier orders.</td><td>Orders → YARN (5)</td><td><span class="pill">Covered</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>The production floor, mid-shift</h2>
+    <p class="quote">"Which order is on which machine, how far along it is, and which machines are sitting idle … machines break
+      down, shifts change, and workers move between jobs … what every machine is doing right now, and how much fabric it has
+      produced today."</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Brief</th><th>What we built</th><th>Show it</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Spinning → weaving → dyeing</td><td>Job cards per stage; each order's stage follows them, through to QC, ready and dispatched.</td><td>Orders, buyer page (5, 14)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Which order is on which machine, how far along</td><td>Machine board: order, metres done of metres ordered, speed, operator, estimated finish.</td><td>Production (4)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Which machines are idle</td><td>"Not running" count on the board and in the digest.</td><td>Dashboard, Production (2, 4)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Breakdowns</td><td>One-tap status; a breakdown note is triaged by AI (what kind of fault, who to send).</td><td>Production (4)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Shifts change, workers move between jobs</td><td>Job cards carry operator and shift; swap an operator or free a worker, from the app or WhatsApp.</td><td>WhatsApp (3, message 4)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>What every machine is doing right now, produced today</td><td>Live status and today's output on every machine card.</td><td>Production (4)</td><td><span class="pill">Covered</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Checking the fabric before it leaves the line</h2>
+    <p class="quote">"Defects such as holes, colour mismatch or uneven weaving … some pass, some need rework, and a few are rejected
+      … every roll traceable back to the order and the machine … a clear record of what passed, what failed, and what is
+      waiting."</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Brief</th><th>What we built</th><th>Show it</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Holes, colour mismatch, uneven weave</td><td>Exactly these defect types (plus stain, other); AI classifies the type from the inspector's notes.</td><td>Quality (7)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Pass, rework, reject</td><td>One tap to pass; rework and reject need a reason; rework rolls go back into the queue; rejected rolls can never ship.</td><td>Quality (7)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Every roll traceable to order and machine</td><td>QR label on every roll → order, buyer, machine, shift, operator, yarn, QC history, truck.</td><td>Traceability (8)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Track a defect to its cause</td><td>Defect hotspot alerts (a loom on one shift failing far more than the rest) with what to check; the defect breakdown chart.</td><td>Quality (7)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Record of passed, failed and waiting</td><td>Roll statuses, the QC queue, the defect report.</td><td>Quality (7)</td><td><span class="pill">Covered</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>A buyer calls asking about their order</h2>
+    <p class="quote">"Tell a buyer, at any time, exactly where their order stands: whether it is still being woven, being checked,
+      or ready to ship, without anyone having to go and look."</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Brief</th><th>What we built</th><th>Show it</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Where the order stands, when it will be ready</td><td>Stage, metres made, passed and shipped, expected ready date and deadline: on the buyer's own link, in the office's tracking view, and by WhatsApp.</td><td>Tracking, WhatsApp (14, 3)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Without anyone going to look</td><td>The buyer's page updates itself; messages are routed by AI, and replies are drafted from live order data.</td><td>Tracking, Inbox (11, 14)</td><td><span class="pill">Covered</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Loading the truck for dispatch</h2>
+    <p class="quote">"The right rolls, in the right quantity, go to the right buyer, with an invoice that matches … how much finished
+      fabric is sitting on the shelf, and what has already gone out, so nothing is dispatched twice or forgotten in a corner."</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Brief</th><th>What we built</th><th>Show it</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Right rolls, right buyer</td><td>Loading checks: the truck must be open, the roll must belong to that order and have passed QC.</td><td>Dispatch (9)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Invoice that matches</td><td>Closing the truck raises the GST invoice and packing list from exactly the rolls loaded.</td><td>Dispatch (9)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Finished fabric on the shelf, what has gone out</td><td>Finished-goods list per order and the truck history.</td><td>Dispatch (9)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Nothing dispatched twice</td><td>A roll can only ever be on one truck; a second scan is blocked.</td><td>Dispatch (9)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Nothing forgotten in a corner</td><td>Finished goods show how long the oldest roll has waited; rolls waiting more than 7 days are flagged by code and counted in the owner's digest.</td><td>Dispatch, Dashboard (9, 2)</td><td><span class="pill new">Added</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>The owner, closing the books</h2>
+    <p class="quote">"What it actually cost to make each order, how much every machine produced, and how much was paid out in worker
+      wages … raw material bills, worker wages, and payments from buyers in one place … whether the mill made money this month."</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Brief</th><th>What we built</th><th>Show it</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>What each order cost</td><td>Yarn issued + labour + machine overhead per order, against what was invoiced, and the margin.</td><td>Accounts (10)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>What every machine produced</td><td>Output, hours and breakdowns per machine per month.</td><td>Reports (15)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Wages paid</td><td>Monthly wages per worker from attendance and piece output.</td><td>Workforce (13)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Bills, wages and buyer payments in one place</td><td>Supplier payables, buyer receivables (paid and outstanding per invoice), and wages, all in Accounts.</td><td>Accounts (10)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Did the mill make money this month?</td><td>Monthly profit and loss: revenue (excluding GST) minus yarn, wages and overhead.</td><td>Accounts, Reports (10, 15)</td><td><span class="pill">Covered</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>The problem the brief starts from</h2>
+    <p class="quote">"Orders get delayed, machines sit idle, and nobody knows the real cost of a single roll of fabric."</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Brief</th><th>What we built</th><th>Show it</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Orders get delayed</td><td>Deadline risk per order (AI), expected ready date, orders at risk in the morning digest.</td><td>Orders → RISK, Dashboard (5, 2)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>Machines sit idle</td><td>Idle machines on the board and in the digest; a loom that runs out of yarn stops and says why.</td><td>Dashboard, Production (2, 4)</td><td><span class="pill">Covered</span></td></tr>
+        <tr><td>The real cost of a single roll</td><td>Cost per metre for every order (counting only the yarn the metres made actually used), so every roll's cost is its metres × that rate. Shown on the roll's trace page to owner and office.</td><td>Traceability, Accounts (8, 10)</td><td><span class="pill new">Added</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <p class="foot">Checked against the brief on 11 October 2026. "Added" items were built after this check and verified with
+    automated tests and in the browser on fresh demo data.</p>
+</div>
+</body>
+</html>

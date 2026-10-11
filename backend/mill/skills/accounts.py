@@ -41,7 +41,8 @@ skill("profit_and_loss", "Show the month's profit and loss: revenue, yarn, wages
 skill("order_cost", "Show what an order cost (yarn, labour, machine overhead) against what it was invoiced, and the margin.", set(),
       [F("order", "order", "order")], lambda v: ("GET", f"/reports/order-cost/{v['order']}", None), lambda v, n: f"cost order #{v['order']}",
       lambda r, v, n: f"Order #{r['order_id']}: yarn {money(r['yarn'])}, wages {money(r['wages'])}, overhead {money(r['overhead'])}, "
-                      f"cost {money(r['total_cost'])}, invoiced {money(r['revenue'])}, margin {money(r['margin'])}.", read=True)
+                      f"cost {money(r['total_cost'])}, invoiced {money(r['revenue'])}, margin {money(r['margin'])}."
+                      + (f" {g(r['made_m'])} m made, so {money(r['cost_per_m'])} per metre." if r["cost_per_m"] else ""), read=True)
 
 skill("machine_report", "Show each machine's output, hours and breakdowns for a month.", set(),
       [F("month", "month", "month", required=False)], lambda v: ("GET", "/reports/machines" + opt(v.get("month"), "?month={}"), None),

@@ -518,3 +518,13 @@ def test_names_count_by_their_distinctive_words():
     words = assistant.norm("user: put Meena on loom 4 and S Ravi on loom 1, night shift")
     assert assistant.mentioned("Meena Devi", words) and assistant.mentioned("Loom 04", words) and assistant.mentioned("S. Ravi", words)
     assert not assistant.mentioned("Loom 02", words) and not assistant.mentioned("Arun Kumar", words)
+
+
+def test_no_network_is_said_plainly(monkeypatch):
+    w, bot = world(), Bot(monkeypatch)
+    bot.several, bot.steps = True, ["x", "y"]
+    def down(*a, **k):
+        raise OSError("nodename nor servname provided")
+    monkeypatch.setattr(ai, "chat_json", down)
+    r = say("set loom x running and also put Op on it", "supervisor")
+    assert r["status"] == "unavailable" and r["reply"].startswith("Sorry, I can't reach the AI right now")

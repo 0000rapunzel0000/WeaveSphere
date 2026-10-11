@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from mill.accounts import order_cost
 from mill.auth import role, user
 from mill.config import SIM_SPEED
 from mill.db import get_db, insert, one, rows, tx
@@ -195,13 +196,18 @@ def list_rolls(order_id: int | None = None, status: Literal["pending_qc", "passe
 
 
 @router.get("/rolls/{qr:path}")
-def trace_roll(qr: str, db=Depends(get_db), _=Depends(user)):
-    """Traceability: roll -> order, machine, shift, operator, yarn issued, QC history, dispatch."""
+def trace_roll(qr: str, db=Depends(get_db), u=Depends(user)):
+    """Traceability: roll -> order, machine, shift, operator, yarn issued, QC history, dispatch, and (owner and office
+    only) what the roll cost: its metres at the order's cost per metre so far."""
     r = one(db, """SELECT r.*, m.name machine, m.kind stage, s.name shift, w.name operator, b.name buyer
         FROM rolls r JOIN machines m ON m.id = r.machine_id JOIN shifts s ON s.id = r.shift_id
         JOIN workers w ON w.id = r.operator_id JOIN orders o ON o.id = r.order_id JOIN buyers b ON b.id = o.buyer_id
         WHERE r.qr = ?""", roll_code(qr))
-    return {**r,
+    cost = None
+    if u["role"] in ("owner", "admin"):
+        c = order_cost(db, r["order_id"])
+        cost = c["cost_per_m"] and {"per_m": c["cost_per_m"], "roll": round(c["cost_per_m"] * r["metres"], 2)}
+    return {**r, "cost": cost,
             "order": tracking(db, one(db, "SELECT * FROM orders WHERE id = ?", r["order_id"])),
             "yarn_issued": rows(db.execute("""SELECT i.*, y.count, y.material, y.colour FROM material_issues i
                 JOIN yarn_types y ON y.id = i.yarn_type_id WHERE i.order_id = ?""", (r["order_id"],))),

@@ -1,5 +1,5 @@
 """Quality and traceability: QC results, the queue, defect hotspots, tracing a roll."""
-from mill.skills import F, STAFF, g, opt, skill
+from mill.skills import F, STAFF, g, money, opt, skill
 
 QC = {"admin", "qc"}
 
@@ -46,4 +46,5 @@ skill("trace_roll", "Trace a roll: its order, buyer, machine, shift, operator, y
       lambda r, v, n: (f"{r['qr']}: {g(r['metres'])} m for order #{r['order_id']} ({r['buyer']}), {r['machine']}, {r['shift']} shift, "
                        f"{r['operator']}, made {r['made_on']}. Status {r['status'].replace('_', ' ')}."
                        + opt("; ".join(f"{q['result']}" + opt(q.get("defect_type"), " ({})") for q in r["qc_history"]), " QC: {}.")
-                       + opt(r["dispatch"] and f"truck #{r['dispatch']['id']} {r['dispatch']['vehicle_no']}", " Left on {}.")), read=True)
+                       + opt(r["dispatch"] and f"truck #{r['dispatch']['id']} {r['dispatch']['vehicle_no']}", " Left on {}.")
+                       + (f" It cost {money(r['cost']['roll'])} ({money(r['cost']['per_m'])}/m)." if r.get("cost") else "")), read=True)

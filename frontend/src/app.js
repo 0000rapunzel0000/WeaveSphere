@@ -57,7 +57,7 @@ try{lang=localStorage.getItem('everest-lang')||'en'}catch{}
 
 // ---------- Master data (read by every page for names) ----------
 const M={buyers:[],suppliers:[],yarn_types:[],fabric_types:[],bom:[],machines:[],workers:[],shifts:[]};
-async function loadMasters(){const keys=Object.keys(M),lists=await Promise.all(keys.map(k=>api('/master/'+k)));keys.forEach((k,i)=>M[k]=lists[i])}
+async function loadMasters(){const keys=Object.keys(M),lists=await Promise.all(keys.map(k=>api('/master/'+k)));keys.forEach((k,i)=>M[k]=k==='workers'?lists[i].filter(w=>w.active!==0):lists[i])}  // removed workers leave every picker
 const byId=(list,id)=>list.find(x=>String(x.id)===String(id));
 const nameOf=(list,id)=>byId(list,id)?.name||'—';
 const yarnName=y=>y?`${y.count} ${y.material} · ${y.colour}`:'—';
@@ -272,11 +272,14 @@ function attendanceRegister(reg){
  return panel('Attendance register · '+esc(reg.month),M.workers.length?`<div class="register-wrap"><table class="register"><thead>${head}</thead><tbody>${body}</tbody></table></div><p class="help">${legend} · a mark means present on that shift · DAYS = days present, as wages count them · pick another month at the top</p>`:'<div class="empty">Add workers in Masters.</div>','WHO WAS PRESENT, DAY BY DAY');
 }
 // Sign-in accounts for staff. Owner and office/admin add them; only an owner can add another owner.
+let editUserId='';
 function staffAccounts(users){
- const roles=Object.entries(ROLE_LABEL).filter(([k])=>k!=='owner'||role==='Owner');
- const fields=field('USERNAME','username','e.g. ravi')+field('PASSWORD','password','At least 8 characters','password')+select('ROLE','role',roles,'supervisor')+field('EMAIL','email','name@yourmill.com','email')+field('PHONE','phone','+91 98400 12345','tel');
- const rows=users.map(x=>`<tr><td>${esc(x.username)}</td><td>${badge(ROLE_LABEL[x.role]||x.role)}</td><td>${esc(x.email||'—')}</td><td>${esc(x.phone||'—')}</td></tr>`);
- return formStart('user','Add a staff account',fields,'ADD ACCOUNT','SIGN-IN FOR THE APP')+panel('Staff accounts',table(['USERNAME','ROLE','EMAIL','PHONE'],rows,'No accounts yet.'),'WHO CAN SIGN IN');
+ const roles=Object.entries(ROLE_LABEL).filter(([k])=>k!=='owner'||role==='Owner'),ed=users.find(x=>x.id===editUserId);
+ const contact=field('EMAIL','email','name@yourmill.com','email',ed?.email||'')+field('PHONE','phone','+91 98400 12345','tel',ed?.phone||'');
+ const fields=ed?contact:field('USERNAME','username','e.g. ravi')+field('PASSWORD','password','At least 8 characters','password')+select('ROLE','role',roles,'supervisor')+contact;
+ const form=ed?`<form class="panel form-section" data-form="user"><div class="panel-head"><h2>Edit ${esc(ed.username)}'s contact details</h2><span class="mono">${esc(ROLE_LABEL[ed.role])}</span></div><div class="form-grid">${fields}</div><div class="form-actions"><button class="primary">SAVE CHANGES</button><button type="button" class="secondary" data-act="cancel-user-edit">CANCEL</button></div></form>`:formStart('user','Add a staff account',fields,'ADD ACCOUNT','SIGN-IN FOR THE APP');
+ const rows=users.map(x=>`<tr><td>${esc(x.username)}</td><td>${badge(ROLE_LABEL[x.role]||x.role)}</td><td>${esc(x.email||'—')}</td><td>${esc(x.phone||'—')}</td><td>${x.role!=='owner'||role==='Owner'?`<div class="inline-actions"><button data-act="edit-user" data-id="${x.id}">EDIT</button>${x.id!==me.id?`<button data-act="remove-user" data-id="${x.id}" data-name="${esc(x.username)}">REMOVE</button>`:''}</div>`:''}</td></tr>`);
+ return form+panel('Staff accounts',table(['USERNAME','ROLE','EMAIL','PHONE',''],rows,'No accounts yet.'),'WHO CAN SIGN IN');
 }
 async function workforcePage(){
  const canWages=['Owner','Office / Admin'].includes(role);
@@ -314,7 +317,7 @@ async function masterPage(){
  const [title,cols]=MASTERS[masterKey],data=M[masterKey],editing=byId(data,editMasterId),canEdit=['Owner','Office / Admin'].includes(role);
  const inputs=cols.map(([k,lbl,type='text',req])=>{const v=editing?.[k]??'';if(Array.isArray(type))return select(lbl,k,type.map(x=>[x,x]),v);if(type==='fabric_types')return select(lbl,k,choices(M.fabric_types),v);if(type==='yarn_types')return select(lbl,k,choices(M.yarn_types,yarnName),v);return field(lbl,k,'',type,v,!!req)}).join('');
  const tabs=Object.entries(MASTERS).map(([k,v])=>`<button class="tab-button master-tab ${k===masterKey?'active selected':''}" data-master="${k}">${v[0]}</button>`).join('');
- const rows=data.map(x=>`<tr><td class="mono-cell">${x.id}</td>${cols.map(([k,,type])=>`<td>${esc(refName(type,x[k]))}</td>`).join('')}${masterKey==='machines'?`<td>${badge(x.status)}</td>`:''}<td>${canEdit?`<div class="inline-actions"><button data-act="edit-master" data-id="${x.id}">EDIT</button></div>`:''}</td></tr>`);
+ const rows=data.map(x=>`<tr><td class="mono-cell">${x.id}</td>${cols.map(([k,,type])=>`<td>${esc(refName(type,x[k]))}</td>`).join('')}${masterKey==='machines'?`<td>${badge(x.status)}</td>`:''}<td>${canEdit?`<div class="inline-actions"><button data-act="edit-master" data-id="${x.id}">EDIT</button>${masterKey==='workers'?`<button data-act="remove-worker" data-id="${x.id}" data-name="${esc(x.name)}">REMOVE</button>`:''}</div>`:''}</td></tr>`);
  return head('Master data','FACTORY DIRECTORY / RECIPES')+`<div class="tabs">${tabs}</div><section class="panel"><div class="panel-head"><h2>${title}</h2><span class="mono">${editing?'EDITING #'+editing.id:'SHARED WITH EVERY SCREEN'}</span></div>`+(canEdit?`<form class="form-grid" data-form="master">${inputs}<div class="form-actions"><button class="primary">${editing?'SAVE CHANGES':'ADD RECORD'}</button>${editing?'<button type="button" class="secondary" data-act="cancel-master-edit">CANCEL</button>':''}</div></form>`:'')+table(['ID',...cols.map(c=>c[1]),...(masterKey==='machines'?['STATUS']:[]),''],rows,'Nothing added yet.')+'</section>';
 }
 
@@ -365,7 +368,7 @@ function showOpening(){
 // ---------- Forms ----------
 const formData=form=>Object.fromEntries(new FormData(form).entries());
 const handlers={
- async user(d){const u=await post('/users',{username:d.username.trim(),password:d.password,role:d.role,email:d.email.trim(),phone:d.phone.trim()});return`Account ${u.username} added (${ROLE_LABEL[u.role]}).`},
+ async user(d){if(editUserId){const u=await put('/users/'+editUserId,{email:d.email.trim()||null,phone:d.phone.trim()||null});editUserId='';return`Saved ${u.username}'s contact details.`}const u=await post('/users',{username:d.username.trim(),password:d.password,role:d.role,email:d.email.trim(),phone:d.phone.trim()});return`Account ${u.username} added (${ROLE_LABEL[u.role]}).`},
  async order(d){const o=await post('/orders',{buyer_id:+d.buyer_id,fabric_type_id:+d.fabric_type_id,colour:d.colour,qty_m:+d.qty_m,deadline:d.deadline,price_per_m:+d.price_per_m});flash=`Order <b>#${o.id}</b> created · yarn check: <b>${esc(o.feasibility.verdict)}</b>.`+poLine(o.po_refresh);return'Order saved.'},
  async grn(d){const r=await post('/grn',{supplier_id:+d.supplier_id,yarn_type_id:+d.yarn_type_id,qty_kg:+d.qty_kg,rate:+d.rate,order_id:intOrNull(d.order_id),challan_no:d.challan_no||null,po_line_id:intOrNull(d.po_line_id)});flash=`GRN-${r.grn.id} recorded · ${esc(yarnName(r.stock))} now ${num(r.stock.stock_kg)} kg. `+lowStockLine(r.low_stock)+poLine(r.po_refresh);return'Goods receipt recorded.'},
  async issue(d){const r=await post('/issues',{order_id:+d.order_id,yarn_type_id:+d.yarn_type_id,qty_kg:+d.qty_kg,machine_id:intOrNull(d.machine_id)});flash=lowStockLine(r.low_stock)+poLine(r.po_refresh);return'Yarn issued.'},
@@ -461,6 +464,8 @@ async function action(act,el){
  const id=el.dataset.id;
  try{
   if(act==='edit-master'){editMasterId=id;return render()}
+  if(act==='remove-user'){if(!confirm(`Remove ${el.dataset.name}'s account? They can't sign in any more. What they recorded stays.`))return;await api('/users/'+id,{method:'DELETE'});await render();return toast(`Account ${el.dataset.name} removed.`)}
+  if(act==='remove-worker'){if(!confirm(`Remove ${el.dataset.name}? They leave every picker and any job they are on. Their attendance, output and wages history stays.`))return;await api('/workers/'+id,{method:'DELETE'});await loadMasters();await render();return toast(`${el.dataset.name} removed.`)}
   if(act==='digest-refresh')return loadDigest(true);
   if(act==='defect-group'){defectGroup=id;return render()}
   if(act==='alert-ack'){await post(`/alerts/defects/${id}/ack`);await render();return toast('Marked as being handled. It clears by itself once the failure rate is back to normal.')}
@@ -468,6 +473,8 @@ async function action(act,el){
   if(act==='po-approve'){if(!confirm(`Approve PO-${id}? This means it has been placed with the supplier.`))return;await post(`/purchase-orders/${id}/approve`);await render();return toast(`PO-${id} approved. Book the delivery against it in the goods receipt form.`)}
   if(act==='po-cancel'){if(!confirm(`Cancel PO-${id}?`))return;await post(`/purchase-orders/${id}/cancel`);await render();return toast(`PO-${id} cancelled.`)}
   if(act==='cancel-master-edit'){editMasterId='';return render()}
+  if(act==='edit-user'){editUserId=+id;await render();return $('form[data-form=user]')?.scrollIntoView({behavior:'smooth',block:'center'})}
+  if(act==='cancel-user-edit'){editUserId='';return render()}
   if(act==='order-link')return copyLink(el.dataset.token);
   if(act==='open-track'){currentOrder=id;if(page!=='Tracking')return setPage('Tracking');return render()}
   if(act==='feasibility'){const f=await api(`/orders/${id}/feasibility`);$('#feasibilityResult').innerHTML=`<b>ORDER #${id}: ${esc(f.verdict.toUpperCase())}</b><br>`+f.lines.map(l=>`${esc(l.count)} ${esc(l.material)} · ${esc(l.colour)}: need ${num(l.required_kg)} kg · issued ${num(l.issued_kg)} · in stock ${num(l.available_kg)}${l.short_kg?` · <b class="warn">SHORT ${num(l.short_kg)} kg</b>`:''}`).join('<br>');return}

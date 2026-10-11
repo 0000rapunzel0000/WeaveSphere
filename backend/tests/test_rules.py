@@ -436,7 +436,8 @@ def test_digest_facts_and_number_check(monkeypatch):
 OFFICE, STORE, FLOOR, QC = "admin", "store", "supervisor", "qc"
 ALL = {OFFICE, STORE, FLOOR, QC}
 MATRIX = [
-    ("GET", "/me", ALL), ("GET", "/users", {OFFICE}), ("POST", "/users", {OFFICE}),
+    ("GET", "/me", ALL), ("GET", "/users", {OFFICE}), ("POST", "/users", {OFFICE}), ("DELETE", "/users/99999", {OFFICE}), ("PUT", "/users/99999", {OFFICE}),
+    ("DELETE", "/workers/99999", {OFFICE}),
     ("GET", "/master/buyers", ALL), ("POST", "/master/buyers", {OFFICE}), ("PUT", "/master/buyers/99999", {OFFICE}),
     ("GET", "/orders", ALL), ("POST", "/orders", {OFFICE}), ("GET", "/orders/99999", ALL),
     ("GET", "/orders/99999/feasibility", ALL), ("GET", "/orders/99999/risk", ALL),
@@ -496,6 +497,19 @@ def test_permission_matrix():
     assert status("POST", "/users", {**new, "username": "r3", "phone": "call me"}, who=OFFICE) == 422
     assert {"email": "ravi@mill.example", "phone": "+91 98400 33333"}.items() <= next(
         x for x in c.get("/users", headers=H["owner"]).json() if x["username"] == "ravi").items()
+    # Editing contact details: only the fields sent change; bad ones are refused.
+    r = c.put(f"/users/{rid0}", json={"phone": "+91 90000 11111"}, headers=H[OFFICE]).json() if (rid0 := next(
+        x["id"] for x in c.get("/users", headers=H["owner"]).json() if x["username"] == "ravi")) else None
+    assert (r["email"], r["phone"]) == ("ravi@mill.example", "+91 90000 11111")
+    assert c.put(f"/users/{rid0}", json={"email": "nope"}, headers=H[OFFICE]).status_code == 422
+    # Removing an account: it can't sign in, its live session ends, it leaves the list; nobody removes themselves.
+    rid = next(x["id"] for x in c.get("/users", headers=H["owner"]).json() if x["username"] == "ravi")
+    tok = {"Authorization": "Bearer " + c.post("/auth/login", json={"username": "ravi", "password": "secret123"}).json()["token"]}
+    assert status("DELETE", f"/users/{rid}", who=OFFICE) == 200
+    assert c.get("/me", headers=tok).status_code == 401
+    assert c.post("/auth/login", json={"username": "ravi", "password": "secret123"}).status_code == 401
+    assert "ravi" not in [x["username"] for x in c.get("/users", headers=H["owner"]).json()]
+    assert status("DELETE", f"/users/{c.get('/me', headers=H['owner']).json()['id']}") == 409
 
 
 # B15 ---------------------------------------------------------------------------------------------------------------

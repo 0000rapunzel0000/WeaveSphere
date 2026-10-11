@@ -1,13 +1,26 @@
 """Attendance and wages (daily rate or piece rate)."""
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from mill.auth import role
 from mill.db import get_db, month_of, rows, tx
 
 router = APIRouter()
+
+
+@router.delete("/workers/{wid}")
+def remove_worker(wid: int, db=Depends(get_db), _=role("admin")):
+    """A worker who left: hidden from every picker and the assistant, taken off any job. Past attendance,
+    output, QC and wages keep their name."""
+    with tx(db):
+        w = db.execute("SELECT name FROM workers WHERE id = ? AND active = 1", (wid,)).fetchone()
+        if not w:
+            raise HTTPException(404, "no such worker")
+        db.execute("UPDATE workers SET active = 0 WHERE id = ?", (wid,))
+        db.execute("UPDATE job_cards SET operator_id = NULL, released = 1 WHERE operator_id = ?", (wid,))
+    return {"ok": True, "removed": w["name"]}
 
 
 class AttendanceIn(BaseModel):

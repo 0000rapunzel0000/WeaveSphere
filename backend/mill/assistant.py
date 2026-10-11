@@ -58,7 +58,7 @@ ACTIONS = {"one": "the message asks for one thing, done once (one entry to recor
 CATALOG = {
     "machine": "SELECT id, name FROM machines ORDER BY name",
     "shift": "SELECT id, name FROM shifts ORDER BY id",
-    "worker": "SELECT id, name FROM workers ORDER BY name",
+    "worker": "SELECT id, name FROM workers WHERE active = 1 ORDER BY name",
     "yarn": "SELECT id, count || ' ' || material || ' ' || colour FROM yarn_types ORDER BY id",
     "supplier": "SELECT id, name FROM suppliers ORDER BY name",
     "buyer": "SELECT id, name FROM buyers ORDER BY name",

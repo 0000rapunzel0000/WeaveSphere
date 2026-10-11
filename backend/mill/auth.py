@@ -44,7 +44,7 @@ def claims(authorization):
 def user(authorization: str = Header(""), db=Depends(get_db)):
     c = claims(authorization)
     # The role is re-read from users, so a changed role or removed user takes effect at once, not at token expiry.
-    u = c and db.execute("SELECT id, username, role FROM users WHERE id = ? AND NOT EXISTS "
+    u = c and db.execute("SELECT id, username, role FROM users WHERE id = ? AND active = 1 AND NOT EXISTS "
                          "(SELECT 1 FROM revoked_tokens WHERE jti = ?)", (int(c["sub"]), c["jti"])).fetchone()
     if not u:
         raise HTTPException(401, "login required")
@@ -70,6 +70,11 @@ class UserIn(BaseModel):
     username: str = Field(min_length=1, max_length=64, pattern=r"^\S+$")
     password: str = Field(min_length=8)
     role: Role
+    email: str | None = Field(None, max_length=254, pattern=EMAIL)
+    phone: str | None = Field(None, max_length=20, pattern=PHONE)
+
+
+class UserEdit(BaseModel):
     email: str | None = Field(None, max_length=254, pattern=EMAIL)
     phone: str | None = Field(None, max_length=20, pattern=PHONE)
 
@@ -108,7 +113,7 @@ def login(body: Login, db=Depends(get_db)):
     recent = [t for t in FAILED.get(name, []) if now - t < LOCK_SECONDS]
     if len(recent) >= LOCK_AFTER:
         raise HTTPException(429, f"too many failed sign-ins; try again in {int((LOCK_SECONDS - (now - recent[0])) // 60) + 1} min")
-    u = db.execute("SELECT * FROM users WHERE username = ?", (body.username.strip(),)).fetchone()
+    u = db.execute("SELECT * FROM users WHERE username = ? AND active = 1", (body.username.strip(),)).fetchone()
     # Hash even for unknown users so the response time doesn't reveal which usernames exist.
     stored = u["pw_hash"] if u else hash_pw("x")
     if not secrets.compare_digest(hash_pw(body.password, stored.split("$")[0]), stored) or not u:
@@ -153,4 +158,31 @@ def create_user(body: UserIn, db=Depends(get_db), u=role("admin")):
 
 @router.get("/users")
 def list_users(db=Depends(get_db), _=role("admin")):
-    return rows(db.execute("SELECT id, username, role, email, phone FROM users ORDER BY id"))
+    return rows(db.execute("SELECT id, username, role, email, phone FROM users WHERE active = 1 ORDER BY id"))
+
+
+@router.put("/users/{uid}")
+def edit_user(uid: int, body: UserEdit, db=Depends(get_db), u=role("admin")):
+    """Changes a staff account's email and/or phone (only the fields sent)."""
+    t = db.execute("SELECT * FROM users WHERE id = ? AND active = 1", (uid,)).fetchone()
+    if not t:
+        raise HTTPException(404, "no such account")
+    if t["role"] == "owner" and u["role"] != "owner":
+        raise HTTPException(403, "only an owner can change an owner's details")
+    if data := body.model_dump(exclude_unset=True):
+        db.execute(f"UPDATE users SET {', '.join(k + ' = :' + k for k in data)} WHERE id = :id", {**data, "id": uid})  # keys: UserEdit fields
+    return dict(db.execute("SELECT id, username, role, email, phone FROM users WHERE id = ?", (uid,)).fetchone())
+
+
+@router.delete("/users/{uid}")
+def remove_user(uid: int, db=Depends(get_db), u=role("admin")):
+    """Removes a staff account: it can't sign in from now on (current sessions end at once). Rows it created keep it."""
+    t = db.execute("SELECT * FROM users WHERE id = ? AND active = 1", (uid,)).fetchone()
+    if not t:
+        raise HTTPException(404, "no such account")
+    if t["id"] == u["id"]:
+        raise HTTPException(409, "you can't remove your own account")
+    if t["role"] == "owner" and u["role"] != "owner":
+        raise HTTPException(403, "only an owner can remove an owner")
+    db.execute("UPDATE users SET active = 0 WHERE id = ?", (uid,))
+    return {"ok": True, "removed": t["username"]}

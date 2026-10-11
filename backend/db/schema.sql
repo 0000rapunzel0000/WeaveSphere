@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS users (
   pw_hash TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'store', 'supervisor', 'qc')),
   email TEXT,
-  phone TEXT
+  phone TEXT,
+  active INTEGER NOT NULL DEFAULT 1 -- 0 = removed: can't sign in; history keeps the name
 ) STRICT;
 
 -- Sign-in uses signed JWTs, so there is no session table: just the signing key and signed-out tokens until they expire.
@@ -56,7 +57,8 @@ CREATE TABLE IF NOT EXISTS machines (
 CREATE TABLE IF NOT EXISTS workers (
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT,
   wage_type TEXT NOT NULL CHECK (wage_type IN ('daily', 'piece')),
-  rate REAL NOT NULL CHECK (rate >= 0) -- per day, or per unit of output
+  rate REAL NOT NULL CHECK (rate >= 0), -- per day, or per unit of output
+  active INTEGER NOT NULL DEFAULT 1 -- 0 = left the mill: hidden from pickers; history keeps the name
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS shifts (

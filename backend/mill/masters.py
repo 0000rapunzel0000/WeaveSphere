@@ -14,6 +14,7 @@ def master_cols(db, table, data):
     if table not in MASTERS:
         raise HTTPException(404, "unknown master table")
     cols = {r["name"] for r in db.execute(f"PRAGMA table_info({table})")} - {"id"}
+    cols.discard("active")  # removing a worker goes through DELETE /workers/{id}
     if table == "machines":
         cols.discard("status")  # changed only via /machines/{id}/status so it gets logged
     if bad := set(data) - cols:

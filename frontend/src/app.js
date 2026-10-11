@@ -24,7 +24,7 @@ async function api(path,{method='GET',body}={}){
  catch{throw Error('Cannot reach the mill server. Is the backend running?')}
  const data=await r.json().catch(()=>({}));
  if(r.status===401&&token&&!path.startsWith('/auth/')){signOut();throw Error('Your session has ended. Sign in again.')}
- if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:`Request failed (${r.status})`);
+ if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:Array.isArray(data.detail)?data.detail.map(d=>`${d.loc.at(-1)}: ${d.msg}`).join('; '):`Request failed (${r.status})`);
  return data;
 }
 const post=(path,body)=>api(path,{method:'POST',body}),put=(path,body)=>api(path,{method:'PUT',body});
@@ -256,13 +256,20 @@ function attendanceRegister(reg){
  const legend=M.shifts.map(s=>`<b>${tag(s.name)}</b> ${esc(s.name)}`).join(' · ');
  return panel('Attendance register · '+esc(reg.month),M.workers.length?`<div class="register-wrap"><table class="register"><thead>${head}</thead><tbody>${body}</tbody></table></div><p class="help">${legend} · a mark means present on that shift · DAYS = days present, as wages count them · pick another month at the top</p>`:'<div class="empty">Add workers in Masters.</div>','WHO WAS PRESENT, DAY BY DAY');
 }
+// Sign-in accounts for staff. Owner and office/admin add them; only an owner can add another owner.
+function staffAccounts(users){
+ const roles=Object.entries(ROLE_LABEL).filter(([k])=>k!=='owner'||role==='Owner');
+ const fields=field('USERNAME','username','e.g. ravi')+field('PASSWORD','password','At least 8 characters','password')+select('ROLE','role',roles,'supervisor')+field('EMAIL','email','name@yourmill.com','email')+field('PHONE','phone','+91 98400 12345','tel');
+ const rows=users.map(x=>`<tr><td>${esc(x.username)}</td><td>${badge(ROLE_LABEL[x.role]||x.role)}</td><td>${esc(x.email||'—')}</td><td>${esc(x.phone||'—')}</td></tr>`);
+ return formStart('user','Add a staff account',fields,'ADD ACCOUNT','SIGN-IN FOR THE APP')+panel('Staff accounts',table(['USERNAME','ROLE','EMAIL','PHONE'],rows,'No accounts yet.'),'WHO CAN SIGN IN');
+}
 async function workforcePage(){
  const canWages=['Owner','Office / Admin'].includes(role);
- const [wages,register]=await Promise.all([canWages?api('/wages?month='+reportMonth):null,api('/attendance?month='+reportMonth).catch(e=>({error:e.message}))]);  // the register failing must not take the page down
+ const [wages,register,users]=await Promise.all([canWages?api('/wages?month='+reportMonth):null,api('/attendance?month='+reportMonth).catch(e=>({error:e.message})),canWages?api('/users'):null]);  // the register failing must not take the page down
  const workers=M.workers.map(w=>`<label class="roll-card"><input type="checkbox" name="worker_ids" value="${w.id}"><strong>${esc(w.name)}</strong><small>${esc(w.wage_type)} · ${money(w.rate)}${w.wage_type==='daily'?'/day':'/unit'}</small></label>`).join('')||'<div class="empty">Add workers in Masters.</div>';
  const attendance=`<form class="panel form-section" data-form="attendance"><div class="panel-head"><h2>Record shift attendance</h2><span class="mono">TICK EVERYONE PRESENT</span></div><div class="form-grid">${select('SHIFT','shift_id',choices(M.shifts))+field('DATE','work_date','','date',today())}</div><div class="roll-cards" style="margin-top:12px">${workers}</div><div class="form-actions"><button class="primary">SAVE ATTENDANCE</button></div></form>`;
  const wageRows=wages?wages.workers.map(w=>`<tr><td>${esc(w.name)}</td><td>${esc(w.wage_type)} · ${money(w.rate)}</td><td>${w.days}</td><td>${num(w.output)}</td><td>${money(w.wage)}</td></tr>`):[];
- return head('People, shifts & wages','ATTENDANCE / PAYROLL',monthForm())+'<div class="grid three">'+kpi('WORKERS',M.workers.length,'ON THE ROSTER')+(wages?kpi('WAGES · '+esc(wages.month),money(wages.total),'ATTENDANCE + PIECE OUTPUT'):'')+'</div>'+attendance+attendanceRegister(register)+(wages?panel('Monthly wages',table(['WORKER','RATE RULE','DAYS PRESENT','OUTPUT','WAGE'],wageRows,'No workers yet.'),'DAILY × DAYS, OR PIECE × OUTPUT'):'');
+ return head('People, shifts & wages','ATTENDANCE / PAYROLL',monthForm())+'<div class="grid three">'+kpi('WORKERS',M.workers.length,'ON THE ROSTER')+(wages?kpi('WAGES · '+esc(wages.month),money(wages.total),'ATTENDANCE + PIECE OUTPUT'):'')+'</div>'+attendance+attendanceRegister(register)+(users?staffAccounts(users):'')+(wages?panel('Monthly wages',table(['WORKER','RATE RULE','DAYS PRESENT','OUTPUT','WAGE'],wageRows,'No workers yet.'),'DAILY × DAYS, OR PIECE × OUTPUT'):'');
 }
 
 async function accountsPage(){
@@ -342,6 +349,7 @@ function showOpening(){
 // ---------- Forms ----------
 const formData=form=>Object.fromEntries(new FormData(form).entries());
 const handlers={
+ async user(d){const u=await post('/users',{username:d.username.trim(),password:d.password,role:d.role,email:d.email.trim(),phone:d.phone.trim()});return`Account ${u.username} added (${ROLE_LABEL[u.role]}).`},
  async order(d){const o=await post('/orders',{buyer_id:+d.buyer_id,fabric_type_id:+d.fabric_type_id,colour:d.colour,qty_m:+d.qty_m,deadline:d.deadline,price_per_m:+d.price_per_m});flash=`Order <b>#${o.id}</b> created · yarn check: <b>${esc(o.feasibility.verdict)}</b>.`+poLine(o.po_refresh);return'Order saved.'},
  async grn(d){const r=await post('/grn',{supplier_id:+d.supplier_id,yarn_type_id:+d.yarn_type_id,qty_kg:+d.qty_kg,rate:+d.rate,order_id:intOrNull(d.order_id),challan_no:d.challan_no||null,po_line_id:intOrNull(d.po_line_id)});flash=`GRN-${r.grn.id} recorded · ${esc(yarnName(r.stock))} now ${num(r.stock.stock_kg)} kg. `+lowStockLine(r.low_stock)+poLine(r.po_refresh);return'Goods receipt recorded.'},
  async issue(d){const r=await post('/issues',{order_id:+d.order_id,yarn_type_id:+d.yarn_type_id,qty_kg:+d.qty_kg,machine_id:intOrNull(d.machine_id)});flash=lowStockLine(r.low_stock)+poLine(r.po_refresh);return'Yarn issued.'},
@@ -506,14 +514,14 @@ async function submitLogin(e){
  try{const r=await post('/auth/login',{username:identity,password});await startSession(r.token)}catch(err){showAuthMessage(err.message)}
 }
 async function firstSetup(){
- const username=$('#loginIdentity').value.trim(),password=$('#loginPassword').value;
- if(!username||password.length<8)return showAuthMessage('Type the owner username and a password of at least 8 characters first.');
- try{const r=await post('/auth/setup',{username,password});await startSession(r.token);toast('Owner account created.')}catch(err){showAuthMessage(err.message)}
+ const username=$('#loginIdentity').value.trim(),password=$('#loginPassword').value,email=$('#setupEmail').value.trim(),phone=$('#setupPhone').value.trim();
+ if(!username||password.length<8||!email||!phone)return showAuthMessage('Type the owner username, a password of at least 8 characters, an email and a phone number first.');
+ try{const r=await post('/auth/setup',{username,password,email,phone});await startSession(r.token);toast('Owner account created.')}catch(err){showAuthMessage(err.message)}
 }
 function signOut(){if(token)fetch(API+'/auth/logout',{method:'POST',headers:{Authorization:'Bearer '+token}}).catch(()=>{});token=null;me=null;store.set('everest-token',null);currentOrder='';currentToken='';traceRoll='';shownFlash='';editMasterId='';digestCache=null;poLines={};flash='';if(!$('#app').classList.contains('hidden')){$('#app').classList.add('hidden');$('#gate').classList.remove('hidden');showGate()}}
 
 // ---------- Events ----------
-$('#sideNav').addEventListener('click',e=>{const b=e.target.closest('[data-page]');if(b)setPage(b.dataset.page)});
+$('#sideNav').addEventListener('click',e=>{const b=e.target.closest('[data-page]');if(b){setMenu(false);setPage(b.dataset.page)}});
 $('#view').addEventListener('click',e=>{const nav=e.target.closest('[data-page]');if(nav)return setPage(nav.dataset.page);const act=e.target.closest('[data-act]');if(act)return action(act.dataset.act,act);const mt=e.target.closest('[data-master]');if(mt){masterKey=mt.dataset.master;editMasterId='';render()}});
 $('#modal').addEventListener('close',()=>{const was=!!scanStream;stopScan();if(was&&page==='Dispatch')render(true)});  // camera off; show rolls loaded by camera
 $('#modal').addEventListener('click',e=>{const act=e.target.closest('[data-act]');if(act){e.preventDefault();action(act.dataset.act,act)}});
@@ -539,9 +547,15 @@ $('#view').addEventListener('change',async e=>{
 });
 $('#exportButton').addEventListener('click',doCSV);
 $('#printButton').addEventListener('click',()=>window.print());
-$('#roleSwitch').addEventListener('click',signOut);
-$('#topSignOut').addEventListener('click',signOut);
-$('#topLang').addEventListener('click',()=>switchLanguage(lang==='en'?'ta':'en'));
+$('#roleSwitch').addEventListener('click',()=>{setMenu(false);signOut()});
+// Phones: the sidebar is a drawer behind the MENU button; the page behind it is inert while it is open.
+function setMenu(open){
+ document.body.classList.toggle('nav-open',open);$('#menuButton').setAttribute('aria-expanded',String(open));$('#navScrim').hidden=!open;$('.main').inert=open;
+ if(open)$('#sideNav .nav-item.active, #sideNav .nav-item')?.focus();
+}
+$('#menuButton').addEventListener('click',()=>setMenu(!document.body.classList.contains('nav-open')));
+$('#navScrim').addEventListener('click',()=>{setMenu(false);$('#menuButton').focus()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.body.classList.contains('nav-open')){setMenu(false);$('#menuButton').focus()}});
 $('#languageToggle').addEventListener('click',()=>switchLanguage(lang==='en'?'ta':'en'));
 $('#loginForm').addEventListener('submit',submitLogin);
 $('#gate').addEventListener('click',e=>{
